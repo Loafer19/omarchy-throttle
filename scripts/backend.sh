@@ -57,6 +57,10 @@ NORMALIZE='
     bulkMiB: ((.bulkMiB // $d.bulkMiB) | mib)
   };
   def dedupe: reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end);
+  def oneof($opts; $dflt): . as $v | if (type == "string") and any($opts[]; . == $v) then . else $dflt end;
+  def steps($dflt): (if type == "array" then map(tonumber? // empty | floor | select(. >= 1 and . <= 10000)) | dedupe | sort | .[0:6] else [] end)
+    | if length > 0 then . else $dflt end;
+  def days($dflt): (tonumber? // $dflt) | floor | if . < 1 then 1 elif . > 365 then 365 else . end;
   . as $s | $defaults as $d |
   (if ($s.apps | type) == "object" then $s.apps else {} end) as $sa |
   ($d.presets | to_entries | map(.key as $k | .value as $p |
@@ -78,6 +82,10 @@ NORMALIZE='
     enabled: (if ($s.enabled | type) == "boolean" then $s.enabled else $d.enabled end),
     downMbit: (($s.downMbit // $d.downMbit) | mbit),
     upMbit: (($s.upMbit // $d.upMbit) | mbit),
+    units: ($s.units | oneof(["mbit", "mbyte"]; $d.units)),
+    barWidget: ($s.barWidget | oneof(["icon", "dot", "rate"]; $d.barWidget)),
+    steps: ($s.steps | steps($d.steps)),
+    keepDays: (($s.keepDays // $d.keepDays) | days($d.keepDays)),
     apps: (($pre + $custom) | from_entries)
   }'
 
@@ -427,7 +435,7 @@ stats_sample() {
   local deltas today cutoff keep
   deltas=$(ss_deltas "$RUN/stats.prev" bytes)
   today=$(stats_today)
-  keep=$(defaults_json | jq -r .limits.keepDays)
+  keep=$(settings_get | jq -r ".keepDays // $(defaults_json | jq -r .keepDays)")
   cutoff=$(date -d "$today -$keep days" +%F)
   if [[ -n $deltas ]]; then
     jq -c --arg day "$today" --arg cutoff "$cutoff" --arg d "$deltas" '

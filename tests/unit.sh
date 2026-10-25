@@ -46,6 +46,16 @@ B settings-set '{"apps":{"heroic":null}}' >/dev/null
 expect "null on a preset only resets it" "$(B settings-get | jq -c '[(.apps|keys_unsorted), .apps.heroic.downMbit]')" '[["heroic","steam"],0]'
 echo 'not json' > "$tmp/state/settings.json"
 expect "corrupt file falls back to defaults" "$(B settings-get | jq -c .downMbit)" '0'
+echo "== display / steps / history settings"
+expect "new keys default" "$(B settings-get | jq -c '[.units,.barWidget,.steps,.keepDays]')" '["mbit","icon",[10,25,50,100],35]'
+B settings-set '{"units":"mbyte","barWidget":"rate","steps":[50,5,20.7,5,10],"keepDays":7}' >/dev/null
+expect "valid values kept (steps floored, deduped, sorted)" "$(B settings-get | jq -c '[.units,.barWidget,.steps,.keepDays]')" '["mbyte","rate",[5,10,20,50],7]'
+B settings-set '{"units":"bits","barWidget":5,"steps":[0,-3,"x"],"keepDays":9999}' >/dev/null
+expect "bad values fall back / clamp" "$(B settings-get | jq -c '[.units,.barWidget,.steps,.keepDays]')" '["mbit","icon",[10,25,50,100],365]'
+B settings-set '{"steps":[1,2,3,4,5,6,7,8],"keepDays":0}' >/dev/null
+expect "at most 6 steps, keepDays ≥ 1" "$(B settings-get | jq -c '[.steps,.keepDays]')" '[[1,2,3,4,5,6],1]'
+B settings-set '{"steps":"10,25","keepDays":"x"}' >/dev/null
+expect "wrong types → defaults" "$(B settings-get | jq -c '[.steps,.keepDays]')" '[[10,25,50,100],35]'
 
 echo "== plan / app discovery"
 cp /usr/bin/sleep "$tmp/yt-heroic"
@@ -58,6 +68,9 @@ expect "plan passes heroic cgroup, mode all" "$plan" "apply --iface eth-test --d
 expect "discovery reports heroic running" "$(B plan | tail -1 | jq -c '.[0] | [.running, (.cgroups|length)]')" '[true,1]'
 B settings-set '{"apps":{"heroic":{"gamesSafe":true,"bulkMiB":8}}}' >/dev/null
 expect_match "games-safe → bulk mode" "$(B plan | head -1)" "heroic:10000:2000:bulk:8:"
+B settings-set '{"apps":{"heroic":{"bulkMiB":16},"steam":{"bulkMiB":16}}}' >/dev/null
+expect_match "Settings › Games-safe threshold reaches the helper args" "$(B plan | head -1)" "heroic:10000:2000:bulk:16:"
+B settings-set '{"apps":{"heroic":{"bulkMiB":8},"steam":{"bulkMiB":4}}}' >/dev/null
 B settings-set '{"enabled":false}' >/dev/null
 expect "master switch off → clear" "$(B plan | head -1)" "clear "
 B settings-set '{"enabled":true,"apps":{"heroic":{"downMbit":0,"upMbit":0}}}' >/dev/null
@@ -170,11 +183,15 @@ expect "a long gap (shell was off) is not attributed" "$(B stats | jq -c '.days[
 jq -c '.days["2026-09-01"] = {rx:1,tx:1,apps:{}} | .days["2026-09-20"] = {rx:2,tx:2,apps:{}}' "$tmp/run/stats.json" > "$tmp/s.json" && cp "$tmp/s.json" "$tmp/run/stats.json"
 echo "eth-test 400 400" > "$nd"; S >/dev/null
 expect "days older than keepDays (35) pruned" "$(B stats | jq -c '[.days[].date]')" '["2026-09-20","2026-10-25","2026-10-26"]'
+B settings-set '{"keepDays":7}' >/dev/null
+echo "eth-test 450 450" > "$nd"; S >/dev/null
+expect "keepDays from Settings prunes harder" "$(B stats | jq -c '[.days[].date]')" '["2026-10-25","2026-10-26"]'
+B settings-set '{"keepDays":35}' >/dev/null
 jq -c '.days["2026-10-25"].apps = ([range(50)] | map({key: "p\(.)", value: [., 0]}) | from_entries)' "$tmp/run/stats.json" > "$tmp/s.json" && cp "$tmp/s.json" "$tmp/run/stats.json"
 w2 999999 20510; S >/dev/null
 expect "a day keeps at most 40 names" "$(jq -c '.days["2026-10-25"].apps | [length, .["Other apps"][0]]' "$tmp/run/stats.json")" '[40,66]'
 S --sync >/dev/null; rm -f "$tmp/run/stats.json"
-expect "restart reloads from disk" "$(B stats | jq -c '.days|length')" '3'
+expect "restart reloads from disk" "$(B stats | jq -c '.days|length')" '2'
 expect "stats-reset" "$(B stats-reset; B stats | jq -c .days)" '{"ok":true}
 []'
 unset THROTTLE_NETDEV_FIXTURE THROTTLE_TODAY THROTTLE_SS_FIXTURE
