@@ -6,7 +6,8 @@ import "Model.js" as Model
 // Always loaded (keepLoaded): re-applies limits at login, when the network
 // interface changes, and when a limited app starts or restarts (its cgroup is
 // what the kernel rule matches, so a new cgroup means a new rule). Also keeps
-// the traffic history for the Stats tab (one unprivileged `ss` read per 10 s).
+// the traffic history for Traffic › Today / 7 / 30 days (one unprivileged
+// `ss` read per 10 s).
 Item {
   id: root
   width: 0
@@ -23,9 +24,14 @@ Item {
   property var status: null
   property var traffic: null
   property bool loaded: false
-  // The panel flips this while it shows the Traffic tab; sampling ss is
-  // cheap but there is no reason to do it with the panel closed.
+  // The panel flips this while it shows live rates; sampling ss is cheap but
+  // there is no reason to do it with the panel closed — unless the bar widget
+  // shows a rate or a "cap is maxed out" dot (Settings › Bar widget).
   property bool trafficWanted: false
+  readonly property string widgetMode: cfg && (cfg.barWidget === "dot" || cfg.barWidget === "rate") ? cfg.barWidget : "icon"
+  readonly property bool widgetWantsTraffic: widgetMode === "rate" || (widgetMode === "dot" && limiting)
+  // Traffic › Live: the last 90 s of samples (Model.pushSample).
+  property var history: []
   // Per-day history ({ today, days: [...] }); refreshed while the Stats tab is open.
   property var stats: null
   property bool statsWanted: false
@@ -35,8 +41,11 @@ Item {
     Qt.resolvedUrl("scripts/backend.sh").toString().replace(/^file:\/\//, "")
   readonly property string installScript:
     Qt.resolvedUrl("scripts/install.sh").toString().replace(/^file:\/\//, "")
-  readonly property string installCommand: "sudo bash " + (/^[A-Za-z0-9_.\/@+-]+$/.test(installScript)
-    ? installScript : "'" + installScript.replace(/'/g, "'\\''") + "'")
+  readonly property string uninstallScript:
+    Qt.resolvedUrl("scripts/uninstall.sh").toString().replace(/^file:\/\//, "")
+  function shellQuote(p) { return /^[A-Za-z0-9_.\/@+-]+$/.test(p) ? p : "'" + p.replace(/'/g, "'\\''") + "'" }
+  readonly property string installCommand: "sudo bash " + shellQuote(installScript)
+  readonly property string uninstallCommand: "sudo bash " + shellQuote(uninstallScript)
 
   signal settingsChanged()
 
@@ -100,6 +109,16 @@ Item {
   function copyInstallCommand() {
     Quickshell.execDetached(["wl-copy", root.installCommand])
   }
+  function copyUninstallCommand() {
+    Quickshell.execDetached(["wl-copy", root.uninstallCommand])
+  }
+
+  // Settings › Clear history.
+  function resetStats() {
+    if (resetProc.running) return
+    resetProc.command = root.backend(["stats-reset"])
+    resetProc.running = true
+  }
 
   Process {
     id: getProc
@@ -156,9 +175,20 @@ Item {
       onStreamFinished: {
         try {
           var data = JSON.parse(text)
-          if (data && Array.isArray(data.apps)) root.traffic = data
+          if (data && Array.isArray(data.apps)) {
+            root.traffic = data
+            root.history = Model.pushSample(root.history, data, Date.now(), Model.LIVE_SAMPLES)
+          }
         } catch (e) {}
       }
+    }
+  }
+
+  Process {
+    id: resetProc
+    onExited: {
+      root.stats = null
+      root.sampleStats()
     }
   }
 
@@ -186,8 +216,8 @@ Item {
     onTriggered: root.tick(false)
   }
   Timer {
-    interval: 1500
-    running: root.trafficWanted
+    interval: root.trafficWanted ? 1500 : 3000
+    running: root.trafficWanted || root.widgetWantsTraffic
     repeat: true
     triggeredOnStart: true
     onTriggered: root.sampleTraffic()
