@@ -1,13 +1,15 @@
-import qs.Commons as Commons
 import QtQuick
-import QtQuick.Controls
 import Quickshell
-import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
+import "theme"
 import "components" as Throttle
 
+// Two-level tabs: Limits (Apps · Connection · + Add), Traffic (Live · Today ·
+// 7 days · 30 days), Settings. Keyboard: Tab cycles tabs; j/k walk
+// tabs → sub-tabs → rows; h/l switch sub-tabs or change the row's value;
+// Enter opens / toggles; Esc goes back from an app, then closes; p pauses.
 Panel {
   id: root
   moduleName: "yoyo.throttle"
@@ -18,45 +20,63 @@ Panel {
   property var hostWidget: null
   readonly property var barIdentity: hostWidget || root
 
-  readonly property color contentForeground: bar ? bar.foreground : Commons.Color.foreground
+  readonly property color contentForeground: bar ? bar.foreground : Theme.foreground
   readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property color dividerColor: Qt.rgba(contentForeground.r, contentForeground.g, contentForeground.b, 0.12)
-  readonly property int edgeMargin: Style.space(6)
+  Binding { target: Theme; property: "foreground"; value: root.contentForeground }
+  Binding { target: Theme; property: "fontFamily"; value: root.contentFontFamily }
 
   property var store: null
   property string activeTab: "limits"
+  property string limitsSub: "apps"
+  property string trafficSub: "live"
+  // Limits › Apps drill-in: the app key whose detail page is open, or "".
+  property string detailKey: ""
   property bool fieldFocus: false
 
-  readonly property var tabs: [
-    { key: "limits", label: "Limits" },
-    { key: "apps", label: "Apps" },
-    { key: "traffic", label: "Traffic" },
-    { key: "stats", label: "Stats" }
-  ]
+  readonly property var tabs: Model.TABS
+  readonly property var subtabs: Model.subtabsOf(activeTab)
+  readonly property string activeSub: activeTab === "limits" ? limitsSub : (activeTab === "traffic" ? trafficSub : "")
 
+  readonly property var emptyList: []
   readonly property var cfg: store && store.cfg ? store.cfg : Model.DEFAULTS
   readonly property var status: store ? store.status : null
+  readonly property var traffic: store ? store.traffic : null
   readonly property bool enabledOn: cfg.enabled !== false
   readonly property bool limiting: store ? store.limiting === true : false
   readonly property bool needsSetup: status !== null && status.helper !== "installed"
+  readonly property string units: cfg.units === "mbyte" ? "mbyte" : "mbit"
+  readonly property var steps: Model.stepsOf(cfg)
 
-  readonly property var limitView: Model.limitRows(cfg)
-  readonly property var appView: Model.appRows(cfg, status, store ? store.traffic : null)
-  readonly property var emptyList: []
-  readonly property var trafficView: store && store.traffic ? store.traffic.apps : emptyList
-
-  property string statsRange: "week"
-  readonly property var statsSummary: Model.statsSummary(store ? store.stats : null, statsRange)
-  readonly property var statsView: Model.statsRows(statsSummary)
+  readonly property var liveSeries: Model.liveSeries(store && store.history ? store.history : emptyList, 4, units)
+  readonly property var statsSummary: Model.statsSummary(store ? store.stats : null, trafficSub === "live" ? "today" : trafficSub)
   readonly property real statsPeak: {
     var m = 1
     for (var i = 0; i < statsSummary.apps.length; i++) m = Math.max(m, statsSummary.apps[i].down + statsSummary.apps[i].up)
     return m
   }
-  readonly property real trafficPeak: {
-    var m = 1
-    for (var i = 0; i < trafficView.length; i++) m = Math.max(m, trafficView[i].down + trafficView[i].up)
-    return m
+
+  readonly property var activeRows: {
+    if (activeTab === "limits") {
+      if (limitsSub === "connection") return Model.connectionRows(cfg, status)
+      if (limitsSub === "add") return Model.addRows(cfg, traffic)
+      if (detailKey !== "") {
+        var d = Model.detailRows(cfg, status, traffic, detailKey, limiting, units)
+        if (d.length) return d
+      }
+      return Model.appListRows(cfg, status, traffic, limiting, units)
+    }
+    if (activeTab === "traffic") {
+      if (trafficSub === "live") return Model.liveRows(cfg, traffic, store && store.history ? store.history : emptyList)
+      return Model.historyRows(cfg, statsSummary, !!(store && store.stats))
+    }
+    return Model.settingsRows(cfg, status, !needsSetup)
+  }
+  readonly property bool inDetail: activeTab === "limits" && limitsSub === "apps" && detailKey !== "" && activeRows.length > 0 && activeRows[0].kind === "crumb"
+
+  readonly property string subCaption: {
+    if (activeTab === "limits") return Model.appList(cfg).length + " of " + Model.MAX_APPS + " apps"
+    if (activeTab === "traffic") return (status && status.iface ? status.iface : "network") + (trafficSub === "live" ? " · every 1.5 s" : "")
+    return ""
   }
 
   function bindStore() {
@@ -77,21 +97,22 @@ Panel {
     onTriggered: root.bindStore()
   }
 
-  // Live rates only while someone looks at Traffic (or Apps, for its "Add"
-  // suggestions); the history is collected regardless, the tab just reads it.
+  // Live rates while Limits (live "now" rates, + Add suggestions) or
+  // Traffic › Live is open; the per-day history is collected regardless.
   Binding {
     target: root.store
     property: "trafficWanted"
-    value: root.opened && (root.activeTab === "traffic" || root.activeTab === "apps")
+    value: root.opened && (root.activeTab === "limits" || (root.activeTab === "traffic" && root.trafficSub === "live"))
     when: root.store !== null
   }
   Binding {
     target: root.store
     property: "statsWanted"
-    value: root.opened && root.activeTab === "stats"
+    value: root.opened && root.activeTab === "traffic" && root.trafficSub !== "live"
     when: root.store !== null
   }
 
+  // ---------------------------------------------------------- actions ---
   function toggleEnabled() { if (store) store.toggleEnabled() }
 
   function setRate(row, mbit) {
@@ -105,34 +126,69 @@ Panel {
     store.setApp(row.app, row.field, !row.checked)
   }
 
-  function limitedName(name) { return Model.labelCapped(cfg, name) }
-
-  function addApp(proc, label) { if (store) store.addApp(proc, label) }
-  function removeApp(key) { if (store) store.removeApp(key) }
-
-  function stepRange(dx) {
-    var i = chipIndexByKey(Model.RANGES, statsRange) + dx
-    statsRange = Model.RANGES[Math.max(0, Math.min(Model.RANGES.length - 1, i))].key
+  function applyChoice(row, key) {
+    if (!store || !row) return
+    var p = Model.settingPatch(cfg, row.setting, key)
+    if (p) store.setPatch(p)
   }
 
-  // ---- keyboard cursor (tabs → rows), same model as the other yoyo panels ----
+  function runAction(row) {
+    if (!store || !row) return
+    if (row.action === "clear-history") store.resetStats()
+    else if (row.action === "copy-install") store.copyInstallCommand()
+    else if (row.action === "copy-uninstall") store.copyUninstallCommand()
+  }
+
+  function removeApp(key) {
+    if (!store) return
+    store.removeApp(key)
+    goBack()
+  }
+
+  // Add a program and open its page, so the next keystroke sets its cap.
+  function addAndOpen(proc, label) {
+    if (!store) return
+    var p = Model.addPatch(cfg, proc, label)
+    if (!p) return
+    var key = Object.keys(p.apps)[0]
+    if (store.addApp(proc, label) !== false) openApp(key)
+  }
+
+  function setTab(key) {
+    if (activeTab === key) return
+    activeTab = key
+  }
+  function setSub(key) {
+    if (activeTab === "limits") { limitsSub = key; detailKey = "" }
+    else if (activeTab === "traffic") trafficSub = key
+  }
+
+  function openApp(key) {
+    activeTab = "limits"
+    limitsSub = "apps"
+    detailKey = key
+    // Land on Download (row 2) so h/l sets the cap right away.
+    setRowCursor(Math.max(0, nextSelectable(1, 1)))
+    list.positionViewAtBeginning()
+  }
+
+  function goBack() {
+    if (detailKey === "") return false
+    var key = detailKey
+    detailKey = ""
+    var idx = 0
+    for (var i = 0; i < activeRows.length; i++) if (activeRows[i].app === key) idx = i
+    setRowCursor(idx)
+    positionActiveList()
+    return true
+  }
+
+  // ---- keyboard cursor: tabs → filters (sub-tabs) → rows, as System Tidy ----
   property bool cursorActive: false
   property string focusSection: "rows"
   property int selectedIndex: 0
 
-  readonly property var activeRows: {
-    if (activeTab === "limits") return limitView
-    if (activeTab === "apps") return appView
-    if (activeTab === "stats") return statsView
-    return trafficView
-  }
-
-  function selectable(i) {
-    var r = activeRows[i]
-    if (!r) return false
-    if (r.kind === "header") return r.removable === true
-    return r.kind !== "section" && r.kind !== "note" && r.kind !== "chart"
-  }
+  function selectable(i) { return Model.selectableRow(activeRows[i]) }
   function firstSelectable() {
     for (var i = 0; i < activeRows.length; i++) if (selectable(i)) return i
     return -1
@@ -157,6 +213,11 @@ Panel {
     focusSection = "tabs"
     selectedIndex = index
   }
+  function setFiltersCursor(index) {
+    cursorActive = true
+    focusSection = "filters"
+    selectedIndex = index
+  }
 
   function ensureCursor() {
     if (cursorActive) return true
@@ -171,15 +232,17 @@ Panel {
     var n = tabs.length
     var i = (chipIndexByKey(tabs, activeTab) + direction) % n
     if (i < 0) i += n
-    activeTab = tabs[i].key
+    setTab(tabs[i].key)
     setTabsCursor(i)
   }
 
   function rowItem(index) {
-    var list = activeTab === "limits" ? limitList : (activeTab === "apps" ? appList
-      : (activeTab === "stats" ? statsList : trafficList))
     var wrap = list.itemAtIndex ? list.itemAtIndex(index) : null
-    return wrap ? wrap.row : null
+    return wrap ? wrap.item : null
+  }
+
+  function positionActiveList() {
+    if (focusSection === "rows" && selectedIndex >= 0) list.positionViewAtIndex(selectedIndex, ListView.Contain)
   }
 
   function nudge(dx) {
@@ -188,48 +251,91 @@ Panel {
     if (r.kind === "rate") {
       var item = rowItem(selectedIndex)
       if (item && item.step) item.step(dx)
-      else setRate(r, Model.stepPreset(r.value, dx))
+      else setRate(r, Model.stepPreset(r.value, dx, steps))
     } else if (r.kind === "toggle") toggleRow(r)
-    else if (r.kind === "range") stepRange(dx)
+    else if (r.kind === "choice") applyChoice(r, Model.stepChoice(r, dx, false))
   }
 
   function moveCursor(dx, dy) {
     if (!ensureCursor()) return
+    var hasFilters = subtabs.length > 0
     if (dy !== 0) {
       if (focusSection === "tabs") {
-        if (dy > 0) { var f = firstSelectable(); if (f >= 0) setRowCursor(f) }
+        if (dy < 0) return
+        if (hasFilters) { setFiltersCursor(chipIndexByKey(subtabs, activeSub)); return }
+        var f = firstSelectable(); if (f >= 0) setRowCursor(f)
+        return
+      }
+      if (focusSection === "filters") {
+        if (dy < 0) { setTabsCursor(chipIndexByKey(tabs, activeTab)); return }
+        var g = firstSelectable(); if (g >= 0) setRowCursor(g)
         return
       }
       var next = nextSelectable(selectedIndex, dy > 0 ? 1 : -1)
-      if (next >= 0) selectedIndex = next
-      else if (dy < 0) setTabsCursor(chipIndexByKey(tabs, activeTab))
+      if (next >= 0) { selectedIndex = next; positionActiveList() }
+      else if (dy < 0) {
+        list.positionViewAtBeginning()
+        if (hasFilters) setFiltersCursor(chipIndexByKey(subtabs, activeSub))
+        else setTabsCursor(chipIndexByKey(tabs, activeTab))
+      }
       return
     }
     if (dx === 0) return
     if (focusSection === "tabs") {
-      selectedIndex = Math.max(0, Math.min(tabs.length - 1, selectedIndex + dx))
-      activeTab = tabs[selectedIndex].key
+      var t = Math.max(0, Math.min(tabs.length - 1, selectedIndex + dx))
+      setTab(tabs[t].key)
+      setTabsCursor(t)
+      return
+    }
+    if (focusSection === "filters") {
+      var s = Math.max(0, Math.min(subtabs.length - 1, selectedIndex + dx))
+      setSub(subtabs[s].key)
+      setFiltersCursor(s)
       return
     }
     nudge(dx)
   }
 
-  function activateCursor() {
-    if (!ensureCursor()) return
-    if (focusSection === "tabs") { activeTab = tabs[selectedIndex].key; return }
-    var r = activeRows[selectedIndex]
-    var item = rowItem(selectedIndex)
-    if (r && r.kind === "header") { if (item && item.activate) item.activate(); return }
-    if (r && r.kind === "candidate") { addApp(r.proc, r.title); return }
-    if (r && r.kind === "addfield") { if (item && item.focusField) item.focusField(); return }
-    if (r && (r.kind === "stat" || r.kind === "range")) return
-    nudge(1)
+  function activateRow(index) {
+    var r = activeRows[index]
+    if (!r) return
+    setRowCursor(index)
+    var item = rowItem(index)
+    if (r.kind === "app") openApp(r.app)
+    else if (r.kind === "link") { setSub(r.target); setFiltersCursor(chipIndexByKey(subtabs, r.target)) }
+    else if (r.kind === "crumb") goBack()
+    else if (r.kind === "hero") { if (item && item.activate) item.activate() }
+    else if (r.kind === "rate") nudge(1)
+    else if (r.kind === "toggle") toggleRow(r)
+    else if (r.kind === "candidate") addAndOpen(r.proc, r.title)
+    else if (r.kind === "addfield") { if (item && item.focusField) item.focusField() }
+    else if (r.kind === "traffic" || r.kind === "stat") {
+      if (r.key) openApp(r.key)
+      else if (r.addable) addAndOpen(r.proc, r.name)
+    }
+    else if (r.kind === "choice") applyChoice(r, Model.stepChoice(r, 1, true))
+    else if (r.kind === "action") { if (item && item.activate) item.activate() }
   }
 
-  onActiveTabChanged: {
-    focusSection = "rows"
-    selectedIndex = Math.max(0, firstSelectable())
+  function activateCursor() {
+    if (!ensureCursor()) return
+    if (focusSection === "tabs") { setTab(tabs[selectedIndex].key); return }
+    if (focusSection === "filters") { setSub(subtabs[selectedIndex].key); return }
+    activateRow(selectedIndex)
   }
+
+  function backOrClose() {
+    if (goBack()) return
+    root.close()
+  }
+
+  function resetRowCursor() {
+    if (focusSection === "rows") selectedIndex = Math.max(0, firstSelectable())
+    list.positionViewAtBeginning()
+  }
+  onActiveTabChanged: { detailKey = ""; resetRowCursor() }
+  onLimitsSubChanged: resetRowCursor()
+  onTrafficSubChanged: resetRowCursor()
 
   onOpenedChanged: {
     if (!opened) return
@@ -237,6 +343,16 @@ Panel {
     focusSection = "rows"
     selectedIndex = Math.max(0, firstSelectable())
     if (store) store.tick(false)
+  }
+
+  readonly property var keyHints: {
+    if (focusSection === "filters" && cursorActive) return [["h l", activeTab === "traffic" ? "range" : "sub-tabs"], ["j", "rows"], ["Tab", "tabs"], ["p", "pause"]]
+    if (inDetail) return [["Esc", "back"], ["j k", "rows"], ["h l", "change"], ["Enter", "toggle"], ["p", "pause"]]
+    if (activeTab === "settings") return [["Tab", "tabs"], ["j k", "rows"], ["h l", "change"], ["Enter", "next"], ["p", "pause"]]
+    if (activeTab === "traffic") return [["Tab", "tabs"], ["h l", "range"], ["j k", "rows"], ["Enter", "open · add"], ["p", "pause"]]
+    if (limitsSub === "connection") return [["Tab", "tabs"], ["j k", "rows"], ["h l", "change"], ["p", "pause"]]
+    if (limitsSub === "add") return [["Tab", "tabs"], ["j k", "rows"], ["Enter", "add"], ["p", "pause"]]
+    return [["Tab", "tabs"], ["h l", "sub-tabs"], ["j k", "rows"], ["Enter", "open"], ["p", "pause"]]
   }
 
   KeyboardPanel {
@@ -253,7 +369,7 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       blocked: root.fieldFocus
-      onCloseRequested: root.close()
+      onCloseRequested: root.backOrClose()
       onTabRequested: function(direction) { root.cycleTab(direction) }
       onMoveRequested: function(dx, dy) { root.moveCursor(dx, dy) }
       onActivateRequested: root.activateCursor()
@@ -269,54 +385,45 @@ Panel {
         Throttle.ChipRow {
           chips: root.tabs
           selectedKey: root.activeTab
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
           cursorActive: root.cursorActive && root.focusSection === "tabs"
           cursorIndex: root.cursorActive && root.focusSection === "tabs" ? root.selectedIndex : -1
           onSelected: function(key) {
-            root.activeTab = key
+            root.setTab(key)
             root.setTabsCursor(root.chipIndexByKey(root.tabs, key))
           }
           onChipHovered: function(index) { root.setTabsCursor(index) }
         }
 
-        Rectangle { width: parent.width; height: Style.spacing.hairline; color: root.dividerColor }
+        PanelSeparator { foreground: Theme.fg }
 
         Item {
           width: parent.width
-          height: Style.space(28)
+          height: Style.space(24)
 
           Text {
             anchors.left: parent.left
-            anchors.leftMargin: root.edgeMargin
-            anchors.right: headerChips.left
-            anchors.rightMargin: Style.space(8)
+            anchors.leftMargin: Theme.edge
+            anchors.right: onChip.left
+            anchors.rightMargin: Theme.gap
             anchors.verticalCenter: parent.verticalCenter
             elide: Text.ElideRight
             textFormat: Text.PlainText
             text: Model.statusLine(root.status, root.cfg)
-            color: root.status && root.status.error ? Commons.Color.urgent
-              : (root.limiting ? root.contentForeground : Qt.darker(root.contentForeground, 1.5))
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
+            color: root.status && root.status.error ? Theme.urgent : (root.limiting ? Theme.fg : Theme.dim)
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.caption
           }
 
-          Row {
-            id: headerChips
+          Throttle.HeaderChip {
+            id: onChip
             anchors.right: parent.right
-            anchors.rightMargin: root.edgeMargin
+            anchors.rightMargin: Theme.edge
             anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(6)
-
-            Throttle.HeaderChip {
-              text: root.enabledOn ? "On" : "Paused"
-              on: root.enabledOn
-              enabled: !root.needsSetup
-              contentForeground: root.contentForeground
-              contentFontFamily: root.contentFontFamily
-              tooltipText: root.enabledOn ? "Pause every limit (p) — settings are kept" : "Resume limits (p)"
-              onClicked: root.toggleEnabled()
-            }
+            text: root.enabledOn ? "On" : "Paused"
+            on: root.enabledOn
+            enabled: !root.needsSetup
+            tooltipText: root.enabledOn ? "Pause every limit (p) — settings are kept" : "Resume limits (p)"
+            onClicked: root.toggleEnabled()
           }
         }
 
@@ -326,9 +433,9 @@ Panel {
           visible: root.needsSetup
           height: visible ? setupCol.implicitHeight + Style.space(16) : 0
           radius: Style.cornerRadius
-          color: Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.12)
+          color: Theme.tint(Theme.accent, 0.12)
           border.width: Style.spacing.hairline
-          border.color: Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.4)
+          border.color: Theme.tint(Theme.accent, 0.4)
 
           Column {
             id: setupCol
@@ -341,34 +448,32 @@ Panel {
             Text {
               width: parent.width
               wrapMode: Text.WordWrap
-              text: "One-time setup: shaping needs a tiny root helper. Run this once in a terminal (it installs the helper and a sudoers rule for it only):"
-              color: root.contentForeground
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.caption
+              text: "One-time setup: shaping needs a tiny root helper. Run this once in a terminal:"
+              color: Theme.fg
+              font.family: Theme.fontFamily
+              font.pixelSize: Theme.caption
             }
 
             Row {
               width: parent.width
-              spacing: Style.space(8)
+              spacing: Theme.gap
 
               TextEdit {
-                width: parent.width - copyChip.width - Style.space(8)
+                width: parent.width - copyChip.width - Theme.gap
                 anchors.verticalCenter: parent.verticalCenter
                 readOnly: true
                 selectByMouse: true
                 wrapMode: TextEdit.WrapAnywhere
                 text: root.store ? root.store.installCommand : ""
-                color: root.contentForeground
+                color: Theme.fg
                 font.family: "monospace"
-                font.pixelSize: Style.font.caption
+                font.pixelSize: Theme.caption
               }
 
               Throttle.HeaderChip {
                 id: copyChip
                 anchors.verticalCenter: parent.verticalCenter
                 text: copied.running ? "Copied" : "Copy"
-                contentForeground: root.contentForeground
-                contentFontFamily: root.contentFontFamily
                 tooltipText: "Copy the command to the clipboard"
                 onClicked: {
                   if (root.store) root.store.copyInstallCommand()
@@ -380,336 +485,73 @@ Panel {
           }
         }
 
-        Text {
+        // Second level: sub-tabs (the "filters" cursor section) and a caption.
+        Item {
           width: parent.width
-          visible: root.activeTab === "traffic"
-          leftPadding: root.edgeMargin
-          rightPadding: root.edgeMargin
-          wrapMode: Text.WordWrap
-          textFormat: Text.PlainText
-          text: {
-            var t = root.store ? root.store.traffic : null
-            var head = (root.status && root.status.iface ? root.status.iface : "Network")
-            if (!t || !t.iface) return head + " · measuring…"
-            return head + "  ↓ " + Model.formatRate(t.iface.down) + "  ↑ " + Model.formatRate(t.iface.up)
-              + "\nPer-app rows count TCP only; game UDP shows up in the total above."
-          }
-          color: Qt.darker(root.contentForeground, 1.5)
-          font.family: root.contentFontFamily
-          font.pixelSize: Style.font.caption
-        }
+          visible: root.subtabs.length > 0
+          height: visible ? Style.space(24) : 0
 
-        Text {
-          width: parent.width
-          visible: root.activeTab === "stats"
-          leftPadding: root.edgeMargin
-          rightPadding: root.edgeMargin
-          wrapMode: Text.WordWrap
-          textFormat: Text.PlainText
-          text: (root.status && root.status.iface ? root.status.iface : "Network")
-            + "  ↓ " + Model.formatBytes(root.statsSummary.total.down)
-            + "  ↑ " + Model.formatBytes(root.statsSummary.total.up)
-            + "  · " + Model.rangeOf(root.statsRange).label.toLowerCase()
-            + "\nApps count TCP payload; Other / UDP is the rest of the interface total (game UDP, DNS, headers)."
-          color: Qt.darker(root.contentForeground, 1.5)
-          font.family: root.contentFontFamily
-          font.pixelSize: Style.font.caption
+          Throttle.ChipRow {
+            id: subChips
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            compact: true
+            chips: root.subtabs
+            selectedKey: root.activeSub
+            cursorActive: root.cursorActive && root.focusSection === "filters"
+            cursorIndex: root.cursorActive && root.focusSection === "filters" ? root.selectedIndex : -1
+            onSelected: function(key) {
+              root.setSub(key)
+              root.setFiltersCursor(root.chipIndexByKey(root.subtabs, key))
+            }
+            onChipHovered: function(index) { root.setFiltersCursor(index) }
+          }
+
+          Text {
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.edge
+            anchors.left: subChips.right
+            anchors.leftMargin: Theme.gap
+            anchors.verticalCenter: parent.verticalCenter
+            horizontalAlignment: Text.AlignRight
+            elide: Text.ElideLeft
+            text: root.subCaption
+            color: Theme.faint
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.caption
+          }
         }
       }
 
-      Item {
-        id: body
+      ListView {
+        id: list
         anchors.top: header.bottom
-        anchors.topMargin: root.edgeMargin
+        anchors.topMargin: Theme.edge
         anchors.left: parent.left
         anchors.right: parent.right
+        anchors.bottom: footer.top
+        anchors.bottomMargin: Style.space(4)
+        clip: true
+        spacing: 0
+        boundsBehavior: Flickable.StopAtBounds
+        model: root.activeRows.length
+        delegate: Throttle.RowDelegate { panel: root }
+      }
+
+      PanelSeparator {
+        anchors.bottom: footer.top
+        anchors.bottomMargin: Style.space(4)
+        foreground: Theme.fg
+        strength: 0.08
+      }
+
+      Throttle.KeyHints {
+        id: footer
         anchors.bottom: parent.bottom
-
-        ListView {
-          id: limitList
-          anchors.fill: parent
-          visible: root.activeTab === "limits"
-          clip: true
-          spacing: 0
-          // Integer model: refreshed arrays update rows in place (no delegate reset,
-          // so a focused Custom field keeps focus).
-          model: root.limitView.length
-          footer: Text {
-            width: ListView.view ? ListView.view.width : 0
-            topPadding: Style.space(12)
-            leftPadding: root.edgeMargin
-            rightPadding: root.edgeMargin
-            wrapMode: Text.WordWrap
-            text: "Set the cap a little under your real line speed so the queue stays on this PC (low ping) instead of in your router. Per-app caps (Heroic, Steam, or any other program) live in the Apps tab."
-            color: Qt.darker(root.contentForeground, 1.5)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-          }
-          delegate: Item {
-            id: limitWrap
-            required property int index
-            readonly property var modelData: root.limitView[index] || ({})
-            property alias row: limitRow
-            width: ListView.view.width
-            height: limitRow.height
-            Throttle.RateRow {
-              id: limitRow
-              width: parent.width
-              title: limitWrap.modelData.title || ""
-              subtitle: Model.capLabel(limitWrap.modelData.value) + " · " + limitWrap.modelData.subtitle
-              value: limitWrap.modelData.value || 0
-              contentForeground: root.contentForeground
-              contentFontFamily: root.contentFontFamily
-              edgeMargin: root.edgeMargin
-              hasCursor: root.cursorActive && root.focusSection === "rows" && root.activeTab === "limits" && root.selectedIndex === limitWrap.index
-              onRowHovered: root.setRowCursor(limitWrap.index)
-              onValuePicked: function(v) { root.setRate(limitWrap.modelData, v) }
-              onFieldFocusChanged: function(on) { root.fieldFocus = on }
-            }
-          }
-        }
-
-        ListView {
-          id: appList
-          anchors.fill: parent
-          visible: root.activeTab === "apps"
-          clip: true
-          spacing: 0
-          model: root.appView.length
-          delegate: Item {
-            id: appWrap
-            required property int index
-            readonly property var modelData: root.appView[index] || ({})
-            readonly property string kind: modelData.kind || ""
-            readonly property bool cursorHere: root.cursorActive && root.focusSection === "rows" && root.activeTab === "apps" && root.selectedIndex === appWrap.index
-            readonly property var row: kind === "rate" ? rateRow : (kind === "header" ? headerRow : (kind === "addfield" ? addRow : null))
-            width: ListView.view.width
-            height: kind === "header" || kind === "section" ? headerRow.height
-              : kind === "rate" ? rateRow.height
-              : kind === "toggle" ? toggleRow.height
-              : kind === "candidate" ? candidateRow.height
-              : kind === "addfield" ? addRow.height
-              : noteText.implicitHeight
-
-            Throttle.SectionRow {
-              id: headerRow
-              visible: appWrap.kind === "header" || appWrap.kind === "section"
-              width: parent.width
-              title: appWrap.modelData.title || ""
-              subtitle: appWrap.modelData.subtitle || ""
-              showDot: appWrap.kind === "header"
-              removable: appWrap.modelData.removable === true
-              running: Model.appStatus(root.status, appWrap.modelData.app).running === true
-              limited: root.limiting && Model.appStatus(root.status, appWrap.modelData.app).cgroups.length > 0
-                && Model.isCapped(Model.appCfg(root.cfg, appWrap.modelData.app))
-              contentForeground: root.contentForeground
-              contentFontFamily: root.contentFontFamily
-              edgeMargin: root.edgeMargin
-              hasCursor: appWrap.cursorHere && appWrap.kind === "header"
-              onRowHovered: if (appWrap.modelData.removable === true) root.setRowCursor(appWrap.index)
-              onRemoveClicked: root.removeApp(appWrap.modelData.app)
-            }
-
-            Throttle.RateRow {
-              id: rateRow
-              visible: appWrap.kind === "rate"
-              width: parent.width
-              title: appWrap.modelData.title || ""
-              value: appWrap.modelData.value || 0
-              contentForeground: root.contentForeground
-              contentFontFamily: root.contentFontFamily
-              edgeMargin: root.edgeMargin
-              hasCursor: appWrap.cursorHere
-              onRowHovered: root.setRowCursor(appWrap.index)
-              onValuePicked: function(v) { root.setRate(appWrap.modelData, v) }
-              onFieldFocusChanged: function(on) { root.fieldFocus = on }
-            }
-
-            Throttle.ToggleRow {
-              id: toggleRow
-              visible: appWrap.kind === "toggle"
-              width: parent.width
-              title: appWrap.modelData.title || ""
-              subtitle: appWrap.modelData.subtitle || ""
-              checked: appWrap.modelData.checked === true
-              contentForeground: root.contentForeground
-              contentFontFamily: root.contentFontFamily
-              edgeMargin: root.edgeMargin
-              hasCursor: appWrap.cursorHere
-              onRowHovered: root.setRowCursor(appWrap.index)
-              onRowClicked: {
-                root.setRowCursor(appWrap.index)
-                root.toggleRow(appWrap.modelData)
-              }
-            }
-
-            Throttle.TrafficRow {
-              id: candidateRow
-              visible: appWrap.kind === "candidate"
-              width: parent.width
-              name: appWrap.modelData.title || ""
-              down: appWrap.modelData.down || 0
-              up: appWrap.modelData.up || 0
-              conns: appWrap.modelData.conns || 0
-              peak: root.trafficPeak
-              showBar: false
-              actionText: "Add"
-              actionTooltip: "Add " + (appWrap.modelData.title || "") + " to the Apps list (no cap until you set one)"
-              contentForeground: root.contentForeground
-              contentFontFamily: root.contentFontFamily
-              edgeMargin: root.edgeMargin
-              hasCursor: appWrap.cursorHere
-              onRowHovered: root.setRowCursor(appWrap.index)
-              onActionClicked: root.addApp(appWrap.modelData.proc, appWrap.modelData.title)
-            }
-
-            Throttle.AddRow {
-              id: addRow
-              visible: appWrap.kind === "addfield"
-              width: parent.width
-              cfg: root.cfg
-              contentForeground: root.contentForeground
-              contentFontFamily: root.contentFontFamily
-              edgeMargin: root.edgeMargin
-              hasCursor: appWrap.cursorHere
-              onRowHovered: root.setRowCursor(appWrap.index)
-              onSubmitted: function(name) { root.addApp(name) }
-              onFieldFocusChanged: function(on) { root.fieldFocus = on }
-            }
-
-            Text {
-              id: noteText
-              visible: appWrap.kind === "note"
-              width: parent.width
-              topPadding: Style.space(10)
-              leftPadding: root.edgeMargin
-              rightPadding: root.edgeMargin
-              wrapMode: Text.WordWrap
-              textFormat: Text.PlainText
-              text: appWrap.modelData.title || ""
-              color: Qt.darker(root.contentForeground, 1.5)
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.caption
-            }
-          }
-        }
-
-        ListView {
-          id: trafficList
-          anchors.fill: parent
-          visible: root.activeTab === "traffic"
-          clip: true
-          spacing: Style.space(2)
-          model: root.trafficView.length
-          delegate: Item {
-            id: trafficWrap
-            required property int index
-            readonly property var modelData: root.trafficView[index] || ({})
-            property alias row: trafficRow
-            width: ListView.view.width
-            height: trafficRow.height
-            Throttle.TrafficRow {
-              id: trafficRow
-              width: parent.width
-              // Unconfigured programs: full executable name, not the 15-char comm.
-              name: (trafficWrap.modelData.key ? trafficWrap.modelData.name : (trafficWrap.modelData.full || trafficWrap.modelData.name)) || ""
-              down: trafficWrap.modelData.down || 0
-              up: trafficWrap.modelData.up || 0
-              conns: trafficWrap.modelData.conns || 0
-              peak: root.trafficPeak
-              limited: root.limiting && root.limitedName(trafficWrap.modelData.name)
-              contentForeground: root.contentForeground
-              contentFontFamily: root.contentFontFamily
-              edgeMargin: root.edgeMargin
-              hasCursor: root.cursorActive && root.focusSection === "rows" && root.activeTab === "traffic" && root.selectedIndex === trafficWrap.index
-              onRowHovered: root.setRowCursor(trafficWrap.index)
-            }
-          }
-        }
-
-        ListView {
-          id: statsList
-          anchors.fill: parent
-          visible: root.activeTab === "stats"
-          clip: true
-          spacing: Style.space(2)
-          model: root.statsView.length
-          footer: Text {
-            width: ListView.view ? ListView.view.width : 0
-            visible: root.statsSummary.apps.length === 0
-            topPadding: Style.space(16)
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
-            text: root.store && root.store.stats ? "Nothing counted in this range yet" : "Loading…"
-            color: Qt.darker(root.contentForeground, 1.5)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.body
-          }
-          delegate: Item {
-            id: statWrap
-            required property int index
-            readonly property var modelData: root.statsView[index] || ({})
-            readonly property string kind: modelData.kind || ""
-            readonly property bool cursorHere: root.cursorActive && root.focusSection === "rows" && root.activeTab === "stats" && root.selectedIndex === statWrap.index
-            readonly property var row: null
-            width: ListView.view.width
-            height: kind === "range" ? rangeChips.height + Style.space(6)
-              : kind === "chart" ? chart.height + Style.space(6) : statRow.height
-
-            Throttle.ChipRow {
-              id: rangeChips
-              visible: statWrap.kind === "range"
-              x: root.edgeMargin
-              chips: Model.RANGES
-              selectedKey: root.statsRange
-              compact: true
-              foreground: root.contentForeground
-              fontFamily: root.contentFontFamily
-              cursorActive: statWrap.cursorHere
-              cursorIndex: statWrap.cursorHere ? root.chipIndexByKey(Model.RANGES, root.statsRange) : -1
-              onSelected: function(key) { root.statsRange = key; root.setRowCursor(statWrap.index) }
-              onChipHovered: function(index) { root.setRowCursor(statWrap.index) }
-            }
-
-            Throttle.StatsChart {
-              id: chart
-              visible: statWrap.kind === "chart"
-              width: parent.width
-              bars: root.statsSummary.bars
-              peak: root.statsSummary.peak
-              contentForeground: root.contentForeground
-              contentFontFamily: root.contentFontFamily
-              edgeMargin: root.edgeMargin
-            }
-
-            Throttle.TrafficRow {
-              id: statRow
-              visible: statWrap.kind === "stat"
-              width: parent.width
-              name: statWrap.modelData.name || ""
-              down: statWrap.modelData.down || 0
-              up: statWrap.modelData.up || 0
-              bytes: true
-              muted: statWrap.modelData.other === true
-              peak: root.statsPeak
-              limited: root.limiting && root.limitedName(statWrap.modelData.name)
-              contentForeground: root.contentForeground
-              contentFontFamily: root.contentFontFamily
-              edgeMargin: root.edgeMargin
-              hasCursor: statWrap.cursorHere
-              onRowHovered: root.setRowCursor(statWrap.index)
-            }
-          }
-        }
-
-        Text {
-          anchors.centerIn: parent
-          visible: root.activeTab === "traffic" && root.trafficView.length === 0
-          text: root.store && root.store.traffic ? "No open TCP connections" : "Measuring…"
-          color: Qt.darker(root.contentForeground, 1.5)
-          font.family: root.contentFontFamily
-          font.pixelSize: Style.font.body
-        }
+        anchors.left: parent.left
+        anchors.leftMargin: Theme.edge
+        height: Style.space(16)
+        hints: root.keyHints
       }
     }
   }
