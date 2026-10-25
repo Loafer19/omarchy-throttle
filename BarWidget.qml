@@ -4,7 +4,10 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "Model.js" as Model
 
+// Bar icon. Settings › Bar widget: "icon" (default), "dot" (a small urgent
+// dot while a cap is maxed out, ≥ 90 %), "rate" (icon + live download).
 BarWidget {
   id: root
   moduleName: "yoyo.throttle"
@@ -26,7 +29,9 @@ BarWidget {
     if ("hostWidget" in target) target.hostWidget = root
   }
 
-  implicitWidth: button.implicitWidth
+  readonly property bool vertical: root.bar ? root.bar.vertical === true : false
+  readonly property bool showRate: mode === "rate" && !vertical && store !== null && store.traffic !== null
+  implicitWidth: button.implicitWidth + (showRate ? rateText.implicitWidth + Style.space(2) : 0)
   implicitHeight: button.implicitHeight
 
   onBarChanged: injectPanel()
@@ -55,33 +60,65 @@ BarWidget {
 
   readonly property var panelItem: panelLoader.item
   readonly property var store: panelItem ? panelItem.store : null
+  readonly property var cfg: store && store.cfg ? store.cfg : Model.DEFAULTS
+  readonly property string mode: cfg.barWidget === "dot" || cfg.barWidget === "rate" ? cfg.barWidget : "icon"
   readonly property bool limiting: store ? store.limiting === true : false
   readonly property bool paused: store ? (store.cfg && store.cfg.enabled === false) : false
   readonly property bool failing: store && store.status ? (store.status.error || "") !== "" : false
+  readonly property bool biting: limiting && store !== null && Model.biting(cfg, store.traffic)
 
   BarIconButton {
     id: button
-    anchors.fill: parent
+    anchors.left: parent.left
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
     bar: root.bar
     // nf-md-speedometer_slow while limiting, nf-md-speedometer otherwise.
     text: root.limiting ? "\uDB83\uDF86" : "\uDB81\uDCC5"
     active: root.limiting || root.failing
     activeColor: root.failing ? Commons.Color.urgent : Commons.Color.accent
     dimmed: root.paused
-    tooltipText: {
-      if (!root.store || !root.store.status) return "Throttle"
-      if (root.store.status.helper !== "installed") return "Throttle · one-time setup needed"
-      if (root.failing) return "Throttle · " + root.store.status.error
-      if (root.paused) return "Throttle paused · right-click to resume"
-      if (root.limiting) return "Throttle on · right-click to pause"
-      return "Throttle · no limits"
+    tooltipText: root.store ? Model.tooltipText(root.cfg, root.store.status, root.store.traffic, root.limiting, root.cfg.units) : "Throttle"
+    onPressed: function(b) { root.press(b) }
+
+    // "dot" mode: a cap is maxed out right now.
+    Rectangle {
+      visible: root.mode === "dot" && root.biting && !root.paused
+      width: Style.space(6)
+      height: width
+      radius: width / 2
+      color: Commons.Color.urgent
+      x: parent.width / 2 + Style.space(5)
+      y: parent.height / 2 - Style.space(9)
     }
-    onPressed: function(b) {
-      if (b === Qt.RightButton) {
-        if (root.store) root.store.toggleEnabled()
-        return
-      }
-      root.toggle()
+  }
+
+  // "rate" mode: live download next to the icon (horizontal bars only).
+  Text {
+    id: rateText
+    visible: root.showRate
+    anchors.left: button.right
+    anchors.leftMargin: -Style.space(4)
+    anchors.verticalCenter: button.verticalCenter
+    text: root.store && root.store.traffic && root.store.traffic.iface
+      ? "↓" + Model.shortRate(root.store.traffic.iface.down, root.cfg.units) : ""
+    color: root.failing ? Commons.Color.urgent : (root.bar ? root.bar.barForeground : Commons.Color.foreground)
+    opacity: root.paused ? 0.5 : 1
+    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+    font.pixelSize: Style.font.caption
+    MouseArea {
+      anchors.fill: parent
+      acceptedButtons: Qt.LeftButton | Qt.RightButton
+      cursorShape: Qt.PointingHandCursor
+      onClicked: function(mouse) { root.press(mouse.button) }
     }
+  }
+
+  function press(b) {
+    if (b === Qt.RightButton) {
+      if (root.store) root.store.toggleEnabled()
+      return
+    }
+    root.toggle()
   }
 }
