@@ -145,6 +145,11 @@ check "steam small 2 MiB TCP (under threshold) not capped" "$(mbit_get steam $((
 check "steam large 40 MiB TCP download capped" "$(mbit_get steam $((40*MB)))" 8 13
 check "steam UDP 40 Mbit/s 'game' stream not capped" "$(in_scope steam python3 "$here/udp-client.py" 10.9.0.1)" 34 42
 
+echo "== Settings › Games-safe threshold 16 MiB (bulkMiB passed per app)"
+helper_run apply --iface vc --down 0 --up 0 --app "steam:10000:0:bulk:16:$SC" >/dev/null || echo "apply failed"
+check "steam 8 MiB TCP (under 16 MiB) not capped" "$(mbit_get steam $((8*MB)))" 60 260
+check "steam 40 MiB TCP: first 16 MiB fast, rest capped" "$(mbit_get steam $((40*MB)))" 10 20
+
 echo "== same in mode all: UDP is capped (proves the bulk rule is what protects games)"
 helper_run apply --iface vc --down 0 --up 0 --app "steam:10000:0:all:4:$SC" >/dev/null || echo "apply failed"
 check "steam UDP stream capped in mode all" "$(in_scope steam python3 "$here/udp-client.py" 10.9.0.1)" 5 11
