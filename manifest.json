@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "yoyo.throttle",
   "name": "Throttle",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "yoyo",
   "license": "MIT",
-  "description": "Cap download/upload for the whole connection or just Heroic and Steam, keep games fast, and see which app is eating your bandwidth",
+  "description": "Cap download/upload for the whole connection or any app (Heroic, Steam, browsers, torrents…), keep games fast, see live traffic and per-app history",
   "keepLoaded": true,
   "kinds": [
     "service",
@@ -17,7 +17,7 @@
   },
   "barWidget": {
     "displayName": "Throttle",
-    "description": "Bandwidth limits for the connection, Heroic, and Steam",
+    "description": "Bandwidth limits and traffic stats for the connection and any app",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right"

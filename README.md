@@ -1,22 +1,37 @@
 # Throttle — bandwidth limits for Omarchy
 
-Bar widget that caps download/upload for the whole connection or just for
-Heroic and Steam, so a game download doesn't wreck your ping while you play.
+Bar widget that caps download/upload for the whole connection or for single
+apps — Heroic and Steam built in, plus any other program (Chrome, Vesktop, a
+torrent client…) — so one download doesn't wreck your ping while you play, and
+shows where your traffic went today, this week and this month.
 
 ![Apps tab](preview.png)
 
 - **Limits** — global download / upload caps on the default-route interface
   (picked automatically, follows Wi-Fi ↔ Ethernet). **Off / 10 / 25 / 50 / 100**
   Mbit/s or **Custom**.
-- **Apps** — per-app caps for **Heroic** (incl. `legendary` / `gogdl` / `nile`)
-  and **Steam**, matched by their systemd cgroup. **Games-safe** (default) caps
-  only TCP transfers past 4 MiB, so game UDP and small requests stay fast.
+- **Apps** — per-app caps, matched by the app's systemd cgroup. **Heroic**
+  (incl. `legendary` / `gogdl` / `nile`) and **Steam** are always there; add
+  any other program from the ones that have connections open right now (one
+  click) or by process name (as in `ps -o comm`, e.g. `chrome`, `vesktop`,
+  `qbittorrent`). Up to 8 apps; custom ones have a **Remove** chip (click
+  twice). **Games-safe** / **Big transfers only** caps only TCP transfers past
+  4 MiB, so game UDP, calls and small requests stay fast.
 - **Traffic** — live per-app rates (from `ss`, no root) next to the interface
   total.
+- **Stats** — how much each app downloaded / uploaded **today**, over **7** or
+  **30 days**, with a per-day chart and the interface total. Collected without
+  root every 10 s (TCP byte counters from `ss` + `/sys/class/net`); whatever
+  the per-app rows don't explain (game UDP, DNS, headers, root daemons) is the
+  **Other / UDP** row. Kept for 35 days in
+  `~/.local/state/omarchy/yoyo.throttle/stats.json` (a few KB).
 
-**Tab** cycles tabs · **h/l** chips · **j/k** rows · **Enter** acts · **p** pauses
+![Stats tab](preview-stats.png)
 
-Limits persist and re-apply at login and whenever Heroic or Steam restarts.
+**Tab** cycles tabs · **h/l** chips / range · **j/k** rows · **Enter** acts
+(adds a suggested app, arms/confirms Remove, focuses the name field) · **p** pauses
+
+Limits persist and re-apply at login and whenever a limited app restarts.
 
 ## Requirements
 
@@ -45,8 +60,11 @@ launch options to:
 systemd-run --user --scope --quiet --collect -- %command%
 ```
 
-Start Heroic/Steam from the app launcher, not a terminal (terminal cgroups are
-refused). Per-app Traffic rows count TCP only; UDP is in the total.
+Start limited apps from the app launcher, not a terminal: an app started from
+a terminal shares the terminal's cgroup, so it is refused (the Apps tab says
+so) rather than capping your shell. Shells, `sudo`, Hyprland, PipeWire and
+other session processes can't be added. Per-app Traffic and Stats rows count
+TCP only; UDP is in the total.
 
 ## Uninstall
 

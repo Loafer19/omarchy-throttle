@@ -30,7 +30,8 @@ Panel {
   readonly property var tabs: [
     { key: "limits", label: "Limits" },
     { key: "apps", label: "Apps" },
-    { key: "traffic", label: "Traffic" }
+    { key: "traffic", label: "Traffic" },
+    { key: "stats", label: "Stats" }
   ]
 
   readonly property var cfg: store && store.cfg ? store.cfg : Model.DEFAULTS
@@ -40,9 +41,18 @@ Panel {
   readonly property bool needsSetup: status !== null && status.helper !== "installed"
 
   readonly property var limitView: Model.limitRows(cfg)
-  readonly property var appView: Model.appRows(cfg, status)
+  readonly property var appView: Model.appRows(cfg, status, store ? store.traffic : null)
   readonly property var emptyList: []
   readonly property var trafficView: store && store.traffic ? store.traffic.apps : emptyList
+
+  property string statsRange: "week"
+  readonly property var statsSummary: Model.statsSummary(store ? store.stats : null, statsRange)
+  readonly property var statsView: Model.statsRows(statsSummary)
+  readonly property real statsPeak: {
+    var m = 1
+    for (var i = 0; i < statsSummary.apps.length; i++) m = Math.max(m, statsSummary.apps[i].down + statsSummary.apps[i].up)
+    return m
+  }
   readonly property real trafficPeak: {
     var m = 1
     for (var i = 0; i < trafficView.length; i++) m = Math.max(m, trafficView[i].down + trafficView[i].up)
@@ -67,11 +77,18 @@ Panel {
     onTriggered: root.bindStore()
   }
 
-  // Only sample ss while someone is looking at the Traffic tab.
+  // Live rates only while someone looks at Traffic (or Apps, for its "Add"
+  // suggestions); the history is collected regardless, the tab just reads it.
   Binding {
     target: root.store
     property: "trafficWanted"
-    value: root.opened && root.activeTab === "traffic"
+    value: root.opened && (root.activeTab === "traffic" || root.activeTab === "apps")
+    when: root.store !== null
+  }
+  Binding {
+    target: root.store
+    property: "statsWanted"
+    value: root.opened && root.activeTab === "stats"
     when: root.store !== null
   }
 
@@ -88,12 +105,14 @@ Panel {
     store.setApp(row.app, row.field, !row.checked)
   }
 
-  function limitedName(name) {
-    for (var i = 0; i < Model.APPS.length; i++) {
-      var a = cfg.apps ? cfg.apps[Model.APPS[i].key] : null
-      if (Model.APPS[i].label === name && a && (a.downMbit > 0 || a.upMbit > 0)) return true
-    }
-    return false
+  function limitedName(name) { return Model.labelCapped(cfg, name) }
+
+  function addApp(proc) { if (store) store.addApp(proc) }
+  function removeApp(key) { if (store) store.removeApp(key) }
+
+  function stepRange(dx) {
+    var i = chipIndexByKey(Model.RANGES, statsRange) + dx
+    statsRange = Model.RANGES[Math.max(0, Math.min(Model.RANGES.length - 1, i))].key
   }
 
   // ---- keyboard cursor (tabs → rows), same model as the other yoyo panels ----
@@ -104,12 +123,15 @@ Panel {
   readonly property var activeRows: {
     if (activeTab === "limits") return limitView
     if (activeTab === "apps") return appView
+    if (activeTab === "stats") return statsView
     return trafficView
   }
 
   function selectable(i) {
     var r = activeRows[i]
-    return !!r && r.kind !== "header"
+    if (!r) return false
+    if (r.kind === "header") return r.removable === true
+    return r.kind !== "section" && r.kind !== "note" && r.kind !== "chart"
   }
   function firstSelectable() {
     for (var i = 0; i < activeRows.length; i++) if (selectable(i)) return i
@@ -154,7 +176,8 @@ Panel {
   }
 
   function rowItem(index) {
-    var list = activeTab === "limits" ? limitList : (activeTab === "apps" ? appList : trafficList)
+    var list = activeTab === "limits" ? limitList : (activeTab === "apps" ? appList
+      : (activeTab === "stats" ? statsList : trafficList))
     var wrap = list.itemAtIndex ? list.itemAtIndex(index) : null
     return wrap ? wrap.row : null
   }
@@ -167,6 +190,7 @@ Panel {
       if (item && item.step) item.step(dx)
       else setRate(r, Model.stepPreset(r.value, dx))
     } else if (r.kind === "toggle") toggleRow(r)
+    else if (r.kind === "range") stepRange(dx)
   }
 
   function moveCursor(dx, dy) {
@@ -193,6 +217,12 @@ Panel {
   function activateCursor() {
     if (!ensureCursor()) return
     if (focusSection === "tabs") { activeTab = tabs[selectedIndex].key; return }
+    var r = activeRows[selectedIndex]
+    var item = rowItem(selectedIndex)
+    if (r && r.kind === "header") { if (item && item.activate) item.activate(); return }
+    if (r && r.kind === "candidate") { addApp(r.proc); return }
+    if (r && r.kind === "addfield") { if (item && item.focusField) item.focusField(); return }
+    if (r && (r.kind === "stat" || r.kind === "range")) return
     nudge(1)
   }
 
@@ -368,6 +398,23 @@ Panel {
           font.family: root.contentFontFamily
           font.pixelSize: Style.font.caption
         }
+
+        Text {
+          width: parent.width
+          visible: root.activeTab === "stats"
+          leftPadding: root.edgeMargin
+          rightPadding: root.edgeMargin
+          wrapMode: Text.WordWrap
+          textFormat: Text.PlainText
+          text: (root.status && root.status.iface ? root.status.iface : "Network")
+            + "  ↓ " + Model.formatBytes(root.statsSummary.total.down)
+            + "  ↑ " + Model.formatBytes(root.statsSummary.total.up)
+            + "  · " + Model.rangeOf(root.statsRange).label.toLowerCase()
+            + "\nApps count TCP payload; Other / UDP is the rest of the interface total (game UDP, DNS, headers)."
+          color: Qt.darker(root.contentForeground, 1.5)
+          font.family: root.contentFontFamily
+          font.pixelSize: Style.font.caption
+        }
       }
 
       Item {
@@ -393,7 +440,7 @@ Panel {
             leftPadding: root.edgeMargin
             rightPadding: root.edgeMargin
             wrapMode: Text.WordWrap
-            text: "Set the cap a little under your real line speed so the queue stays on this PC (low ping) instead of in your router. Per-app caps for Heroic and Steam live in the Apps tab."
+            text: "Set the cap a little under your real line speed so the queue stays on this PC (low ping) instead of in your router. Per-app caps (Heroic, Steam, or any other program) live in the Apps tab."
             color: Qt.darker(root.contentForeground, 1.5)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
@@ -433,35 +480,46 @@ Panel {
             id: appWrap
             required property int index
             readonly property var modelData: root.appView[index] || ({})
-            readonly property var row: appWrap.modelData.kind === "rate" ? rateRow : null
+            readonly property string kind: modelData.kind || ""
+            readonly property bool cursorHere: root.cursorActive && root.focusSection === "rows" && root.activeTab === "apps" && root.selectedIndex === appWrap.index
+            readonly property var row: kind === "rate" ? rateRow : (kind === "header" ? headerRow : (kind === "addfield" ? addRow : null))
             width: ListView.view.width
-            height: appWrap.modelData.kind === "header" ? headerRow.height
-              : (appWrap.modelData.kind === "rate" ? rateRow.height : toggleRow.height)
+            height: kind === "header" || kind === "section" ? headerRow.height
+              : kind === "rate" ? rateRow.height
+              : kind === "toggle" ? toggleRow.height
+              : kind === "candidate" ? candidateRow.height
+              : kind === "addfield" ? addRow.height
+              : noteText.implicitHeight
 
             Throttle.SectionRow {
               id: headerRow
-              visible: appWrap.modelData.kind === "header"
+              visible: appWrap.kind === "header" || appWrap.kind === "section"
               width: parent.width
               title: appWrap.modelData.title || ""
               subtitle: appWrap.modelData.subtitle || ""
+              showDot: appWrap.kind === "header"
+              removable: appWrap.modelData.removable === true
               running: Model.appStatus(root.status, appWrap.modelData.app).running === true
               limited: root.limiting && Model.appStatus(root.status, appWrap.modelData.app).cgroups.length > 0
-                && root.limitedName(appWrap.modelData.title)
+                && Model.isCapped(Model.appCfg(root.cfg, appWrap.modelData.app))
               contentForeground: root.contentForeground
               contentFontFamily: root.contentFontFamily
               edgeMargin: root.edgeMargin
+              hasCursor: appWrap.cursorHere && appWrap.kind === "header"
+              onRowHovered: if (appWrap.modelData.removable === true) root.setRowCursor(appWrap.index)
+              onRemoveClicked: root.removeApp(appWrap.modelData.app)
             }
 
             Throttle.RateRow {
               id: rateRow
-              visible: appWrap.modelData.kind === "rate"
+              visible: appWrap.kind === "rate"
               width: parent.width
               title: appWrap.modelData.title || ""
               value: appWrap.modelData.value || 0
               contentForeground: root.contentForeground
               contentFontFamily: root.contentFontFamily
               edgeMargin: root.edgeMargin
-              hasCursor: root.cursorActive && root.focusSection === "rows" && root.activeTab === "apps" && root.selectedIndex === appWrap.index
+              hasCursor: appWrap.cursorHere
               onRowHovered: root.setRowCursor(appWrap.index)
               onValuePicked: function(v) { root.setRate(appWrap.modelData, v) }
               onFieldFocusChanged: function(on) { root.fieldFocus = on }
@@ -469,7 +527,7 @@ Panel {
 
             Throttle.ToggleRow {
               id: toggleRow
-              visible: appWrap.modelData.kind === "toggle"
+              visible: appWrap.kind === "toggle"
               width: parent.width
               title: appWrap.modelData.title || ""
               subtitle: appWrap.modelData.subtitle || ""
@@ -477,12 +535,60 @@ Panel {
               contentForeground: root.contentForeground
               contentFontFamily: root.contentFontFamily
               edgeMargin: root.edgeMargin
-              hasCursor: root.cursorActive && root.focusSection === "rows" && root.activeTab === "apps" && root.selectedIndex === appWrap.index
+              hasCursor: appWrap.cursorHere
               onRowHovered: root.setRowCursor(appWrap.index)
               onRowClicked: {
                 root.setRowCursor(appWrap.index)
                 root.toggleRow(appWrap.modelData)
               }
+            }
+
+            Throttle.TrafficRow {
+              id: candidateRow
+              visible: appWrap.kind === "candidate"
+              width: parent.width
+              name: appWrap.modelData.title || ""
+              down: appWrap.modelData.down || 0
+              up: appWrap.modelData.up || 0
+              conns: appWrap.modelData.conns || 0
+              peak: root.trafficPeak
+              actionText: "Add"
+              actionTooltip: "Add " + (appWrap.modelData.title || "") + " to the Apps list (no cap until you set one)"
+              contentForeground: root.contentForeground
+              contentFontFamily: root.contentFontFamily
+              edgeMargin: root.edgeMargin
+              hasCursor: appWrap.cursorHere
+              onRowHovered: root.setRowCursor(appWrap.index)
+              onActionClicked: root.addApp(appWrap.modelData.proc)
+            }
+
+            Throttle.AddRow {
+              id: addRow
+              visible: appWrap.kind === "addfield"
+              width: parent.width
+              cfg: root.cfg
+              contentForeground: root.contentForeground
+              contentFontFamily: root.contentFontFamily
+              edgeMargin: root.edgeMargin
+              hasCursor: appWrap.cursorHere
+              onRowHovered: root.setRowCursor(appWrap.index)
+              onSubmitted: function(name) { root.addApp(name) }
+              onFieldFocusChanged: function(on) { root.fieldFocus = on }
+            }
+
+            Text {
+              id: noteText
+              visible: appWrap.kind === "note"
+              width: parent.width
+              topPadding: Style.space(10)
+              leftPadding: root.edgeMargin
+              rightPadding: root.edgeMargin
+              wrapMode: Text.WordWrap
+              textFormat: Text.PlainText
+              text: appWrap.modelData.title || ""
+              color: Qt.darker(root.contentForeground, 1.5)
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
             }
           }
         }
@@ -515,6 +621,81 @@ Panel {
               edgeMargin: root.edgeMargin
               hasCursor: root.cursorActive && root.focusSection === "rows" && root.activeTab === "traffic" && root.selectedIndex === trafficWrap.index
               onRowHovered: root.setRowCursor(trafficWrap.index)
+            }
+          }
+        }
+
+        ListView {
+          id: statsList
+          anchors.fill: parent
+          visible: root.activeTab === "stats"
+          clip: true
+          spacing: Style.space(2)
+          model: root.statsView.length
+          footer: Text {
+            width: ListView.view ? ListView.view.width : 0
+            visible: root.statsSummary.apps.length === 0
+            topPadding: Style.space(16)
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            text: root.store && root.store.stats ? "Nothing counted in this range yet" : "Loading…"
+            color: Qt.darker(root.contentForeground, 1.5)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.body
+          }
+          delegate: Item {
+            id: statWrap
+            required property int index
+            readonly property var modelData: root.statsView[index] || ({})
+            readonly property string kind: modelData.kind || ""
+            readonly property bool cursorHere: root.cursorActive && root.focusSection === "rows" && root.activeTab === "stats" && root.selectedIndex === statWrap.index
+            readonly property var row: null
+            width: ListView.view.width
+            height: kind === "range" ? rangeChips.height + Style.space(6)
+              : kind === "chart" ? chart.height + Style.space(6) : statRow.height
+
+            Throttle.ChipRow {
+              id: rangeChips
+              visible: statWrap.kind === "range"
+              x: root.edgeMargin
+              chips: Model.RANGES
+              selectedKey: root.statsRange
+              compact: true
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              cursorActive: statWrap.cursorHere
+              cursorIndex: statWrap.cursorHere ? root.chipIndexByKey(Model.RANGES, root.statsRange) : -1
+              onSelected: function(key) { root.statsRange = key; root.setRowCursor(statWrap.index) }
+              onChipHovered: function(index) { root.setRowCursor(statWrap.index) }
+            }
+
+            Throttle.StatsChart {
+              id: chart
+              visible: statWrap.kind === "chart"
+              width: parent.width
+              bars: root.statsSummary.bars
+              peak: root.statsSummary.peak
+              contentForeground: root.contentForeground
+              contentFontFamily: root.contentFontFamily
+              edgeMargin: root.edgeMargin
+            }
+
+            Throttle.TrafficRow {
+              id: statRow
+              visible: statWrap.kind === "stat"
+              width: parent.width
+              name: statWrap.modelData.name || ""
+              down: statWrap.modelData.down || 0
+              up: statWrap.modelData.up || 0
+              bytes: true
+              muted: statWrap.modelData.other === true
+              peak: root.statsPeak
+              limited: root.limiting && root.limitedName(statWrap.modelData.name)
+              contentForeground: root.contentForeground
+              contentFontFamily: root.contentFontFamily
+              edgeMargin: root.edgeMargin
+              hasCursor: statWrap.cursorHere
+              onRowHovered: root.setRowCursor(statWrap.index)
             }
           }
         }

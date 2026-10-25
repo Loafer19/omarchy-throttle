@@ -17,7 +17,7 @@ expect() { # expect LABEL ACTUAL EXPECTED
 expect_has() { if [[ $2 == *"$3"* ]]; then ok "$1"; else no "$1" "missing: $3"; fi; }
 expect_match() { if [[ $2 =~ $3 ]]; then ok "$1"; else no "$1" "got: $2 | want ~ $3"; fi; }
 cleanup() {
-  systemctl --user stop yt-unit-heroic.scope >/dev/null 2>&1
+  systemctl --user stop yt-unit-heroic.scope yt-unit-torrent.scope >/dev/null 2>&1
   rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -34,6 +34,16 @@ B settings-set '{"downMbit":-5,"upMbit":999999,"apps":{"steam":{"bulkMiB":0,"gam
 expect "clamps and drops unknown apps" "$(B settings-get | jq -c '[.downMbit,.upMbit,.apps.steam.bulkMiB,.apps.steam.gamesSafe,(.apps|keys)]')" '[0,10000,1,true,["heroic","steam"]]'
 out=$(B settings-set '[1]'); rc=$?
 expect "rejects non-object patch" "$out rc=$rc" '{"error":"patch must be a JSON object"} rc=2'
+echo "== any app (custom apps in settings)"
+B settings-set '{"apps":{"qbit":{"label":"  Q\u0001bit  ","procs":["qbittorrent","bash","a/b","qbittorrent","x;y"],"downMbit":5},"Bad Key":{"procs":["x"]},"shells":{"procs":["bash","sudo"]},"heroic":{"procs":["bash"],"label":"Evil"},"str":"x"}}' >/dev/null
+expect "custom app normalized (label, procs, denylist)" "$(B settings-get | jq -c '.apps.qbit | [.label,.procs,.downMbit,.gamesSafe,.preset]')" '["Qbit",["qbittorrent"],5,false,false]'
+expect "bad keys / denied-only / non-objects dropped, presets fixed" "$(B settings-get | jq -c '[(.apps|keys_unsorted), .apps.heroic.label, .apps.heroic.procs[0]]')" '[["heroic","steam","qbit"],"Heroic","heroic"]'
+B settings-set '{"apps":{"a1":{"procs":["a1"]},"a2":{"procs":["a2"]},"a3":{"procs":["a3"]},"a4":{"procs":["a4"]},"a5":{"procs":["a5"]},"a6":{"procs":["a6"]}}}' >/dev/null
+expect "at most 8 apps (matches helper MAX_APPS)" "$(B settings-get | jq -c '[(.apps|length), (.apps|has("a6"))]')" '[8,false]'
+B settings-set '{"apps":{"qbit":null,"a1":null,"a2":null,"a3":null,"a4":null,"a5":null}}' >/dev/null
+expect "null patch removes custom apps" "$(B settings-get | jq -c '.apps|keys_unsorted')" '["heroic","steam"]'
+B settings-set '{"apps":{"heroic":null}}' >/dev/null
+expect "null on a preset only resets it" "$(B settings-get | jq -c '[(.apps|keys_unsorted), .apps.heroic.downMbit]')" '[["heroic","steam"],0]'
 echo 'not json' > "$tmp/state/settings.json"
 expect "corrupt file falls back to defaults" "$(B settings-get | jq -c .downMbit)" '0'
 
@@ -54,6 +64,18 @@ B settings-set '{"enabled":true,"apps":{"heroic":{"downMbit":0,"upMbit":0}}}' >/
 expect "no caps → clear" "$(B plan | head -1)" "clear "
 B settings-set '{"downMbit":25}' >/dev/null
 expect "global only" "$(B plan | head -1)" "apply --iface eth-test --down 25000 --up 0 "
+
+cp /usr/bin/sleep "$tmp/yt-torrent"
+systemd-run --user --quiet --collect --scope --unit=yt-unit-torrent "$tmp/yt-torrent" 300 >/dev/null 2>&1 &
+for _ in $(seq 50); do pgrep -x -u "$uid" yt-torrent >/dev/null && break; sleep 0.1; done
+cgt=$(sed -n 's|^0::/||p' "/proc/$(pgrep -x -u "$uid" yt-torrent | head -1)/cgroup")
+B settings-set '{"downMbit":0,"apps":{"torrent":{"label":"Torrent","procs":["yt-torrent"],"downMbit":12,"upMbit":1}}}' >/dev/null
+expect "custom app gets its own --app slot" "$(B plan | head -1)" "apply --iface eth-test --down 0 --up 0 --app torrent:12000:1000:all:4:$cgt "
+expect "custom app discovery" "$(B plan | tail -1 | jq -c '.[] | select(.key=="torrent") | [.running, .cgroups, .refused]')" "[true,[\"$cgt\"],[]]"
+B settings-set '{"apps":{"torrent":{"gamesSafe":true}}}' >/dev/null
+expect_match "custom app big-transfers-only → bulk" "$(B plan | head -1)" "torrent:12000:1000:bulk:4:"
+systemctl --user stop yt-unit-torrent.scope >/dev/null 2>&1
+B settings-set '{"downMbit":25,"apps":{"torrent":null}}' >/dev/null
 
 echo "== tick with a fake sudo+helper (real helper in --dry-run validates the args)"
 cat > "$tmp/fake-helper" <<FH
@@ -111,6 +133,52 @@ expect_match "Heroic download ≈ 1 MB over the interval" "$(awk -v d="$hd" -v i
 expect "idle Steam socket reads 0" "$(jq -c '.apps[] | select(.name=="Steam") | [.down,.up,.conns]' <<<"$t")" '[0,0,1]'
 expect "root daemons labelled by unit" "$(jq -r '[.apps[].name] | sort | join(",")' <<<"$t")" "Heroic,Steam,tailscaled"
 
+w2() { cat > "$fx" <<SS
+0 0 10.0.0.2:5003 1.2.3.4:443 users:(("yt-torrent",pid=13,fd=3)) uid:$uid ino:400 sk:4 cgroup:/user.slice/z <->
+	 cubic bytes_acked:$2 bytes_received:$1
+0 0 127.0.0.1:5004 127.0.0.1:9000 users:(("yt-torrent",pid=13,fd=4)) uid:$uid ino:500 sk:5 cgroup:/user.slice/z <->
+	 cubic bytes_acked:$2 bytes_received:$1
+0 0 10.0.0.2:5005 1.2.3.4:443 users:(("chrome",pid=14,fd=3)) uid:$uid ino:600 sk:6 cgroup:/user.slice/c <->
+	 cubic bytes_acked:5 bytes_received:5
+SS
+}
+B settings-set '{"apps":{"torrent":{"label":"Torrent","procs":["yt-torrent"]}}}' >/dev/null
+rm -f "$tmp/run/ss.prev"; w2 100 10; B traffic >/dev/null; w2 200100 20010
+t=$(B traffic)
+expect "custom app labelled + keyed, loopback skipped" "$(jq -c '[.apps[] | [.name,.key,.proc,.own,.conns]]' <<<"$t")" '[["Torrent","torrent","yt-torrent",true,1],["chrome","","chrome",true,1]]'
+
+echo "== stats (ss + /proc/net/dev fixtures)"
+nd=$tmp/netdev; export THROTTLE_NETDEV_FIXTURE=$nd THROTTLE_TODAY=2026-10-25
+S() { B stats-sample "$@"; }
+rm -f "$tmp/run/stats.prev"
+echo "eth-test 1000000 50000" > "$nd"; w2 100 10
+expect "first sample is only a baseline" "$(S --print | jq -c '.days')" '[]'
+echo "eth-test 1500000 80000" > "$nd"; w2 300100 20010
+S --sync >/dev/null
+expect "day totals: interface + per app" "$(B stats | jq -c '.days[0] | [.date,.rx,.tx,.apps]')" '["2026-10-25",500000,30000,[{"name":"Torrent","down":300000,"up":20000}]]'
+expect "live copy is synced to disk" "$(jq -c '.days|keys' "$tmp/state/stats.json")" '["2026-10-25"]'
+echo "eth-test 1600000 81000" > "$nd"; w2 350100 20510
+S >/dev/null
+expect "samples add up" "$(B stats | jq -c '.days[0] | [.rx,.tx,.apps[0].down,.apps[0].up]')" '[600000,31000,350000,20500]'
+echo "eth-test 100 100" > "$nd"; w2 360100 20510
+S >/dev/null
+expect "counter reset (reboot/new iface) adds no interface bytes" "$(B stats | jq -c '.days[0] | [.rx,.apps[0].down]')" '[600000,360000]'
+echo "eth-test 200 200" > "$nd"; THROTTLE_TODAY=2026-10-26 S >/dev/null
+expect "new day starts its own bucket" "$(THROTTLE_TODAY=2026-10-26 B stats | jq -c '[.today, (.days|map(.date))]')" '["2026-10-26",["2026-10-25","2026-10-26"]]'
+echo "eth-test 300 300" > "$nd"; THROTTLE_STATS_MAXGAP_S=0 S >/dev/null
+expect "a long gap (shell was off) is not attributed" "$(B stats | jq -c '.days[-1].rx')" '100'
+jq -c '.days["2026-09-01"] = {rx:1,tx:1,apps:{}} | .days["2026-09-20"] = {rx:2,tx:2,apps:{}}' "$tmp/run/stats.json" > "$tmp/s.json" && cp "$tmp/s.json" "$tmp/run/stats.json"
+echo "eth-test 400 400" > "$nd"; S >/dev/null
+expect "days older than keepDays (35) pruned" "$(B stats | jq -c '[.days[].date]')" '["2026-09-20","2026-10-25","2026-10-26"]'
+jq -c '.days["2026-10-25"].apps = ([range(50)] | map({key: "p\(.)", value: [., 0]}) | from_entries)' "$tmp/run/stats.json" > "$tmp/s.json" && cp "$tmp/s.json" "$tmp/run/stats.json"
+w2 999999 20510; S >/dev/null
+expect "a day keeps at most 40 names" "$(jq -c '.days["2026-10-25"].apps | [length, .["Other apps"][0]]' "$tmp/run/stats.json")" '[40,66]'
+S --sync >/dev/null; rm -f "$tmp/run/stats.json"
+expect "restart reloads from disk" "$(B stats | jq -c '.days|length')" '3'
+expect "stats-reset" "$(B stats-reset; B stats | jq -c .days)" '{"ok":true}
+[]'
+unset THROTTLE_NETDEV_FIXTURE THROTTLE_TODAY THROTTLE_SS_FIXTURE
+
 echo "== helper argument validation (dry-run)"
 H() { THROTTLE_TEST=1 THROTTLE_TEST_UID=$uid bash "$helper" --dry-run "$@" 2>&1; }
 good="user.slice/user-$uid.slice/user@$uid.service/app.slice/app-Hyprland-heroic\\x2dx-1.scope"
@@ -130,6 +198,8 @@ for bad in \
   "apply --iface eth0 --down 0 --up 0 --app heroic:1000:0:all:4:user.slice/user-$uid.slice/user@$uid.service/a\"b" \
   "apply --iface eth0 --down 0 --up 0 --app heroic:1000:0:all:4:user.slice/user-$uid.slice/user@$uid.service/a\$(id)" \
   "apply --iface eth0 --down 0 --up 0 --bogus 1" \
+  "apply --iface eth0 --down 0 --up 0$(for i in 1 2 3 4 5 6 7 8 9; do printf ' --app a%s:1000:0:all:4:%s' "$i" "$good"; done)" \
+  "apply --iface eth0 --down 0 --up 0 --app google-chrome-stable:1000:0:all:4:$good" \
   "clear extra" \
   "rm -rf /"; do
   # shellcheck disable=SC2086
@@ -138,6 +208,8 @@ for bad in \
 done
 out=$(H apply --iface eth0 --down 50000 --up 20000 --app "heroic:10000:5000:bulk:4:$good"); rc=$?
 expect "accepts a valid apply" "$rc" "0"
+out8=$(H apply --iface eth0 --down 0 --up 0 $(for i in 1 2 3 4 5 6 7 8; do printf ' --app custom-%s:1000:0:all:4:%s' "$i" "$good"; done)); rc=$?
+expect "accepts 8 apps incl. custom keys" "$rc $(grep -c 'socket cgroupv2' <<<"$out8")" "0 8"
 expect_has "nft rule matches the escaped cgroup path" "$out" "socket cgroupv2 level 5 \"$good\" meta l4proto tcp ct bytes > 4194304"
 expect_match "ingress redirect via ifb with ctinfo" "$out" "matchall action ctinfo cpmark 0x0f000000 action mirred egress redirect dev ifb-throttle"
 expect_match "heroic class ceil 10 Mbit" "$out" "classid 1:11 htb rate 1000kbit ceil 10000kbit"

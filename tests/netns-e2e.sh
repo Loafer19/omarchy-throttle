@@ -81,8 +81,8 @@ check() { # check LABEL VALUE MIN MAX
 # The heroic scope name carries a systemd "\x2d" escape, like the real
 # app-Hyprland-gtk\x2dlaunch-*.scope units Omarchy's launcher creates.
 H='heroic\x2dgl'
-start_scope "$H"; start_scope steam; start_scope other
-HC="$cgbase/yt-$H.scope"; SC="$cgbase/yt-steam.scope"
+start_scope "$H"; start_scope steam; start_scope other; start_scope torrent
+HC="$cgbase/yt-$H.scope"; SC="$cgbase/yt-steam.scope"; TC="$cgbase/yt-torrent.scope"
 MB=$((1024*1024))
 
 echo "== baseline (no shaping)"
@@ -118,6 +118,24 @@ if [[ $(jq -r --arg cg "$HC" '[.applied, .apps[0].running, (.apps[0].cgroups == 
 else echo "FAIL  tick: $st"; fail=$((fail+1)); fi
 check "heroic capped at 15 via backend" "$(mbit_get "$H" $((12*MB)))" 12 16
 check "other app untouched via backend" "$(mbit_get other $((40*MB)))" 150 210
+
+echo "== any app: a custom 'Torrent' app (process yt-torrent) capped at 12 next to heroic"
+cp /usr/bin/sleep "$work/yt-torrent"
+bash -c 'echo $$ > "$0/cgroup.procs" && exec "$1" 300' "/sys/fs/cgroup/$TC" "$work/yt-torrent" & faketorrent=$!
+sleep 0.3
+bash "$here/../scripts/backend.sh" settings-set '{"apps":{"torrent":{"label":"Torrent","procs":["yt-torrent"],"downMbit":12,"upMbit":3}}}' >/dev/null
+st=$(bash "$here/../scripts/backend.sh" tick)
+if [[ $(jq -r --arg cg "$TC" '[.applied, (.apps[] | select(.key == "torrent") | .running, (.cgroups == [$cg]))] | join(",")' <<<"$st") == "true,true,true" ]]; then
+  echo "PASS  tick applied with the custom app's cgroup"; pass=$((pass+1))
+else echo "FAIL  tick: $st"; fail=$((fail+1)); fi
+check "custom app download capped at 12" "$(mbit_get torrent $((10*MB)))" 9.5 13
+check "custom app upload capped at 3" "$(mbit_put torrent $((2*MB)))" 2.4 3.3
+check "heroic still capped at 15 alongside" "$(mbit_get "$H" $((12*MB)))" 12 16
+check "other app untouched with two app caps" "$(mbit_get other $((40*MB)))" 150 210
+bash "$here/../scripts/backend.sh" settings-set '{"apps":{"torrent":null}}' >/dev/null
+bash "$here/../scripts/backend.sh" tick >/dev/null
+check "removed custom app is no longer capped" "$(mbit_get torrent $((40*MB)))" 150 210
+kill "$faketorrent" 2>/dev/null; wait "$faketorrent" 2>/dev/null
 kill "$fakeheroic" 2>/dev/null; wait "$fakeheroic" 2>/dev/null
 unset THROTTLE_PROCS_HEROIC THROTTLE_PROCS_STEAM THROTTLE_STATE_ROOT THROTTLE_RUN_DIR THROTTLE_IFACE THROTTLE_HELPER THROTTLE_SUDO
 

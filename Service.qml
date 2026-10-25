@@ -4,8 +4,9 @@ import Quickshell.Io
 import "Model.js" as Model
 
 // Always loaded (keepLoaded): re-applies limits at login, when the network
-// interface changes, and when Heroic/Steam start or restart (their cgroup is
-// what the kernel rule matches, so a new cgroup means a new rule).
+// interface changes, and when a limited app starts or restarts (its cgroup is
+// what the kernel rule matches, so a new cgroup means a new rule). Also keeps
+// the traffic history for the Stats tab (one unprivileged `ss` read per 10 s).
 Item {
   id: root
   width: 0
@@ -25,6 +26,9 @@ Item {
   // The panel flips this while it shows the Traffic tab; sampling ss is
   // cheap but there is no reason to do it with the panel closed.
   property bool trafficWanted: false
+  // Per-day history ({ today, days: [...] }); refreshed while the Stats tab is open.
+  property var stats: null
+  property bool statsWanted: false
 
   readonly property bool limiting: Model.isLimiting(status, cfg)
   readonly property string script:
@@ -50,7 +54,8 @@ Item {
   function flushPatches() {
     if (setProc.running || pendingPatches.length === 0) return
     var merged = {}
-    for (var i = 0; i < pendingPatches.length; i++) merged = Model.merged(merged, pendingPatches[i])
+    // keepNulls: { apps: { key: null } } is how an app gets removed.
+    for (var i = 0; i < pendingPatches.length; i++) merged = Model.merged(merged, pendingPatches[i], true)
     pendingPatches = []
     setProc.command = root.backend(["settings-set", JSON.stringify(merged)])
     setProc.running = true
@@ -60,6 +65,22 @@ Item {
   function toggleEnabled() { root.setEnabled(!(root.cfg && root.cfg.enabled !== false)) }
   function setGlobal(field, mbit) { root.setPatch(Model.patchFor("", field, Model.clampMbit(mbit))) }
   function setApp(app, field, value) { root.setPatch(Model.patchFor(app, field, value)) }
+  function addApp(proc) {
+    var p = Model.addPatch(root.cfg, proc)
+    if (p) root.setPatch(p)
+    return p !== null
+  }
+  function removeApp(key) {
+    var p = Model.removePatch(root.cfg, key)
+    if (p) root.setPatch(p)
+  }
+
+  function sampleStats() {
+    if (statsProc.running) return
+    statsProc.command = root.backend(root.statsWanted ? ["stats-sample", "--print"] : ["stats-sample"])
+    statsProc.running = true
+  }
+  onStatsWantedChanged: if (statsWanted) sampleStats()
 
   function tick(force) {
     if (tickProc.running) {
@@ -141,6 +162,19 @@ Item {
     }
   }
 
+  Process {
+    id: statsProc
+    stdout: StdioCollector {
+      onStreamFinished: {
+        if (!root.statsWanted) return
+        try {
+          var data = JSON.parse(text)
+          if (data && Array.isArray(data.days)) root.stats = data
+        } catch (e) {}
+      }
+    }
+  }
+
   // Settings changes apply quickly; the 5 s poll catches app (re)starts,
   // interface changes and shaping that vanished (suspend/resume, reboot).
   Timer { id: tickSoon; interval: 250; onTriggered: root.tick(false) }
@@ -159,5 +193,14 @@ Item {
     onTriggered: root.sampleTraffic()
   }
 
+  Timer {
+    interval: root.statsWanted ? 3000 : 10000
+    running: root.loaded
+    repeat: true
+    onTriggered: root.sampleStats()
+  }
+
   Component.onCompleted: getProc.running = true
+  // Shell reload / logout: write the in-memory (tmpfs) day totals to disk.
+  Component.onDestruction: Quickshell.execDetached(root.backend(["stats-sample", "--sync"]))
 }
