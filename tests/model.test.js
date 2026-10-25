@@ -29,11 +29,19 @@ eq("statusLine limiting", M.statusLine(status, cfg), "Limiting on enp42s0 · Her
 eq("isLimiting", M.isLimiting(status, cfg), true)
 eq("paused", M.statusLine(status, M.merged(cfg, { enabled: false })), "Paused — nothing is limited")
 eq("setup", M.statusLine({ helper: "missing" }, cfg), "One-time setup needed")
-const rows = M.appRows(cfg, status)
-eq("app rows shape", rows.map(r => r.kind), ["header", "rate", "rate", "toggle", "header", "rate", "rate", "toggle", "section", "addfield"])
-eq("presets are not removable", [rows[0].removable, rows[4].removable], [false, false])
-eq("heroic header mentions shared cgroup", rows[0].subtitle, "Limited · also caps: ghostty")
-eq("steam not running", rows[4].subtitle, "Not running")
+const rows = M.appListRows(cfg, status, null, true)
+eq("apps list shape", rows.map(r => r.kind), ["app", "app", "section", "link"])
+eq("heroic row mentions shared cgroup + games-safe", [rows[0].subtitle, rows[0].state, rows[0].down], ["Limited · also caps: ghostty · games-safe", "limited", 10])
+eq("steam not running", [rows[1].subtitle, rows[1].state], ["Not running", "idle"])
+eq("whole connection link", [rows[3].target, rows[3].subtitle], ["connection", "Every app on enp42s0 together"])
+eq("live rate in app row", M.appListRows(cfg, status, { apps: [{ key: "heroic", name: "Heroic", down: 1235000, up: 0 }] }, true)[0].subtitle.split(" · ").slice(-1)[0], "↓ 9.9 Mbit/s now")
+const det = M.detailRows(cfg, status, { apps: [{ key: "heroic", name: "Heroic", down: 1235000, up: 0 }] }, "heroic", true)
+eq("detail shape", det.map(r => r.kind + ":" + (r.field || "")), ["crumb:", "hero:", "rate:downMbit", "rate:upMbit", "toggle:gamesSafe"])
+eq("detail hero", [det[1].removable, det[1].trailing, det[1].subtitle], [false, "↓ 9.9 / 10 Mbit/s", "Limited · also caps: ghostty · heroic, legendary, gogdl, nile"])
+eq("preset hero is not selectable, removable hero is", [M.selectableRow(det[1]), M.selectableRow({ kind: "hero", removable: true }), M.selectableRow(det[0])], [false, true, true])
+eq("detail of unknown app", M.detailRows(cfg, status, null, "nope"), [])
+eq("connection rows", M.connectionRows(cfg, status).map(r => r.kind), ["rate", "rate", "note"])
+eq("subtabs", [M.subtabsOf("limits").map(t => t.key), M.subtabsOf("traffic").length, M.subtabsOf("settings")], [["apps", "connection", "add"], 4, []])
 eq("refused-only app explains why",
   M.appSubtitle({ apps: [{ key: "heroic", running: true, cgroups: [], refused: ["session-2.scope:outside-user-manager"], shared: [] }] }, cfg, "heroic"),
   "Can't limit: started outside an app scope (relaunch from the app menu)")
@@ -54,10 +62,11 @@ eq("addPatch refuses known / denied / junk", [M.addPatch(cfg, "steam"), M.addPat
 let cfg2 = M.merged(cfg, add)
 cfg2 = M.merged(cfg2, M.patchFor("qbittorrent", "upMbit", 5))
 eq("custom app listed after presets", M.appList(cfg2).map(a => a.key + ":" + a.preset), ["heroic:true", "steam:true", "qbittorrent:false"])
-const rows2 = M.appRows(cfg2, status, traffic)
-eq("custom header removable + procs in subtitle", [rows2[8].kind, rows2[8].removable, rows2[8].subtitle], ["header", true, "Not running · applies when it starts · qbittorrent"])
-eq("custom toggle wording", rows2[11].title, "Big transfers only")
-eq("candidate rows skip added app", rows2.filter(r => r.kind === "candidate").map(r => r.proc), ["chrome"])
+const det2 = M.detailRows(cfg2, status, traffic, "qbittorrent", true)
+eq("custom hero removable + procs in subtitle", [det2[1].removable, det2[1].subtitle], [true, "Not running · applies when it starts · qbittorrent"])
+eq("custom games-safe off wording", det2[4].subtitle, "Everything Qbittorrent and its children send is capped")
+eq("add rows skip added app", M.addRows(cfg2, traffic).map(r => r.kind + ":" + (r.proc || "")), ["section:", "candidate:chrome", "section:", "addfield:"])
+eq("add rows with nothing new", M.addRows(cfg2, { apps: [] }).map(r => r.kind), ["section", "note", "section", "addfield"])
 eq("statusLine uses custom label", M.statusLine(status, cfg2), "Limiting on enp42s0 · Heroic · Qbittorrent")
 eq("labelCapped", [M.labelCapped(cfg2, "Qbittorrent"), M.labelCapped(cfg2, "Steam")], [true, false])
 eq("removePatch presets refused", [M.removePatch(cfg2, "steam"), M.removePatch(cfg2, "qbittorrent")], [null, { apps: { qbittorrent: null } }])
@@ -66,14 +75,14 @@ eq("keepNulls keeps the instruction", M.merged({}, { apps: { x: null } }, true),
 let full = cfg2
 for (const n of ["a1", "a2", "a3", "a4", "a5"]) full = M.merged(full, M.addPatch(full, n))
 eq("max apps", [M.appList(full).length, M.canAdd(full), M.addPatch(full, "a6")], [8, false, null])
-eq("full list shows note instead of add rows", M.appRows(full, status, traffic).slice(-1)[0].kind, "note")
+eq("full list: add view is an empty state", M.addRows(full, traffic).map(r => r.kind), ["empty"])
 
 const tg = M.addPatch(cfg, "telegram-deskto", "telegram-desktop")
 eq("long name: matched by 15-char comm, full label/key", [Object.keys(tg.apps)[0], tg.apps["telegram-deskto"] ? "" : Object.values(tg.apps)[0].label, Object.values(tg.apps)[0].procs],
   ["telegram-deskt", "Telegram-desktop", ["telegram-deskto"]])
 eq("typed long name is cut to the comm", M.addPatch(cfg, "telegram-desktop").apps["telegram-deskt"].procs, ["telegram-deskto"])
 eq("validName", [M.validName("telegram-desktop"), M.validName("x".repeat(33)), M.validName("bash"), M.validName("a/b")], [true, false, false, false])
-eq("candidate carries full name", M.appRows(cfg, status, { apps: [{ name: "telegram-deskto", key: "", proc: "telegram-deskto", full: "telegram-desktop", own: true, down: 1, up: 1, conns: 1 }] })
+eq("candidate carries full name", M.addRows(cfg, { apps: [{ name: "telegram-deskto", key: "", proc: "telegram-deskto", full: "telegram-desktop", own: true, down: 1, up: 1, conns: 1 }] })
   .filter(r => r.kind === "candidate").map(r => [r.proc, r.title]), [["telegram-deskto", "telegram-desktop"]])
 
 // ---- stats ----
@@ -91,8 +100,66 @@ const week = M.statsSummary(stats, "week")
 eq("week sums days in range", [week.total, week.apps[1]], [{ down: 2500, up: 250 }, { name: "Chrome", down: 400, up: 40 }])
 const month = M.statsSummary(stats, "month")
 eq("month", [month.total.down, month.bars.length, month.peak], [3500, 30, 2200])
-eq("statsRows", M.statsRows(today).map(r => r.kind), ["range", "chart", "stat", "stat", "stat"])
+const hr = M.historyRows(cfg, today, true)
+eq("historyRows", hr.map(r => r.kind), ["total", "daychart", "section", "stat", "stat", "stat"])
+eq("history rows carry key + caps", [hr[3].key, hr[3].capDown, hr[5].other, hr[0].caption], ["steam", 0, true, "peak 2 KiB/day"])
+eq("history empty states", [M.historyRows(cfg, M.statsSummary(null, "week"), false).slice(-1)[0].title, M.historyRows(cfg, M.statsSummary(null, "week"), true).slice(-1)[0].title],
+  ["Loading…", "Nothing counted in this range yet"])
 eq("empty stats", M.statsSummary(null, "week").apps, [])
+
+// ---- steps / units ----
+eq("stepsOf default + custom", [M.stepsOf(M.DEFAULTS), M.stepsOf({ steps: [50, 5, 5, 20, 10] }), M.stepsOf({ steps: [] })], [[0, 10, 25, 50, 100], [0, 5, 10, 20, 50], [0, 10, 25, 50, 100]])
+const s5 = M.stepsOf({ steps: [5, 10, 20, 50] })
+eq("rateKey/stepPreset with steps", [M.rateKey(20, false, s5), M.rateKey(25, false, s5), M.stepPreset(0, 1, s5), M.stepPreset(30, 1, s5)], ["20", "custom", 5, 50])
+eq("rateChips", M.rateChips(s5).map(c => c.label), ["Off", "5", "10", "20", "50", "Custom"])
+eq("capDetail", [M.capDetail(0), M.capDetail(10), M.capDetail(100)], ["Off · no cap", "10 Mbit/s ≈ 1.3 MB/s", "100 Mbit/s ≈ 13 MB/s"])
+eq("formatRate mbyte", [M.formatRate(500, "mbyte"), M.formatRate(85000, "mbyte"), M.formatRate(1250000, "mbyte"), M.formatRate(125e6, "mbyte")], ["0", "85 kB/s", "1.3 MB/s", "125 MB/s"])
+eq("shortRate", [M.shortRate(100), M.shortRate(106250), M.shortRate(1235000), M.shortRate(2410000), M.shortRate(1235000, "mbyte")], ["0", "850k", "9.9M", "19M", "1.2MB"])
+
+// ---- settings ----
+const sr = M.settingsRows(cfg, status, true)
+eq("settings shape", sr.map(r => r.kind === "section" ? "#" + r.title : r.setting || r.action),
+  ["#Display", "units", "barWidget", "#Limits", "steps", "bulkMiB", "#History", "keepDays", "clear-history", "#Helper", "copy-uninstall"])
+eq("settings values", [sr[1].value, sr[2].value, sr[4].value, sr[5].value, sr[7].value], ["mbit", "icon", "10,25,50,100", "4", "35"])
+eq("helper missing → copy install", M.settingsRows(cfg, { helper: "missing" }, false).slice(-1)[0].action, "copy-install")
+eq("odd steps/keepDays get their own chip", [M.settingsRows({ steps: [1, 2], keepDays: 12, apps: {} }, null, true)[4].options.slice(-1)[0].label,
+  M.settingsRows({ keepDays: 12, apps: {} }, null, true)[7].options.slice(-1)[0].label], ["1/2", "12 days"])
+eq("settingPatch", [M.settingPatch(cfg, "units", "mbyte"), M.settingPatch(cfg, "steps", "5,10,20,50"), M.settingPatch(cfg, "keepDays", "90"), M.settingPatch(cfg, "nope", "x")],
+  [{ units: "mbyte" }, { steps: [5, 10, 20, 50] }, { keepDays: 90 }, null])
+eq("bulkMiB goes to every app", M.settingPatch(cfg2, "bulkMiB", "16"), { apps: { heroic: { bulkMiB: 16 }, steam: { bulkMiB: 16 }, qbittorrent: { bulkMiB: 16 } } })
+eq("stepChoice", [M.stepChoice(sr[2], 1, false), M.stepChoice(sr[2], -1, false), M.stepChoice(sr[2], -1, true), M.stepChoice({ options: sr[2].options, value: "rate" }, 1, true)], ["dot", "icon", "rate", "icon"])
+
+// ---- live chart ----
+const tr = (d, apps) => ({ iface: { down: d, up: 1 }, apps: apps })
+let h = []
+for (let i = 0; i < 5; i++) h = M.pushSample(h, tr(1000 + i, [{ name: "Steam", down: 600 }, { name: "Heroic", down: 200 }, { name: "Heroic", down: 100 }]), 1500 * i)
+eq("pushSample appends + sums same name", [h.length, h[4].apps, h[4].down], [5, { Steam: 600, Heroic: 300 }, 1004])
+eq("pushSample caps the window", M.pushSample(h, tr(1, []), 7500, 3).length, 3)
+eq("pushSample gap starts fresh", M.pushSample(h, tr(1, []), 60000).length, 1)
+eq("pushSample ignores missing traffic", M.pushSample(h, null, 7500).length, 5)
+const ls = M.liveSeries(h, 1)
+eq("liveSeries top-n + other", [ls.names, ls.layers[0][0], ls.other[0], ls.total[4], ls.span, ls.count], [["Steam"], 600, 400, 1004, 6, 5])
+eq("liveSeries axis in display units", [M.liveSeries([{ t: 0, down: 2.9e6, apps: {} }]).max, M.liveSeries([{ t: 0, down: 2.9e6, apps: {} }], 4, "mbyte").max], [25e6 / 8, 5e6])
+eq("paused rows don't say Limited", M.appListRows(M.merged(cfg, { enabled: false }), status, null, false)[0].subtitle, "Paused · also caps: ghostty · games-safe")
+eq("liveSeries empty", [M.liveSeries([]).count, M.liveSeries(null).peak], [0, 0])
+eq("niceCeil", [M.niceCeil(0), M.niceCeil(0.7), M.niceCeil(1.5), M.niceCeil(2.2), M.niceCeil(3), M.niceCeil(23.5), M.niceCeil(100)], [1, 1, 2, 2.5, 5, 25, 100])
+eq("liveRows", M.liveRows(cfg, { iface: { down: 5, up: 1 }, apps: traffic.apps }, h).map(r => r.kind).slice(0, 4), ["total", "livechart", "section", "traffic"])
+eq("live rows: addable + caps", M.liveRows(cfg, { iface: { down: 5, up: 1 }, apps: traffic.apps }, h).slice(3).map(r => [r.name, r.capDown, r.addable]),
+  [["Steam", 0, false], ["chrome", 0, true], ["bash", 0, false], ["tailscaled", 0, false], ["qbittorrent", 0, true]])
+eq("live empty / measuring", [M.liveRows(cfg, null, []).slice(-1)[0].title, M.liveRows(cfg, { iface: { down: 0, up: 0 }, apps: [] }, []).slice(-1)[0].title],
+  ["Measuring…", "No open TCP connections"])
+
+// ---- bar widget ----
+const heroicAt = d => ({ iface: { down: d, up: 0 }, apps: [{ key: "heroic", name: "Heroic", down: d, up: 0 }] })
+eq("biting at 90 % of the cap", [M.biting(cfg, heroicAt(1200000)), M.biting(cfg, heroicAt(1000000)), M.biting(M.DEFAULTS, heroicAt(9e9))], [true, false, false])
+eq("tooltip", M.tooltipText(cfg, status, heroicAt(1235000), true).split("\n"), ["Throttle on · enp42s0", "Heroic  ↓ 9.9 Mbit/s / 10 Mbit/s", "Right-click to pause"])
+eq("tooltip states", [M.tooltipText(cfg, null), M.tooltipText(cfg, { helper: "missing" }), M.tooltipText(M.merged(cfg, { enabled: false }), status), M.tooltipText(M.DEFAULTS, status)],
+  ["Throttle", "Throttle · one-time setup needed", "Throttle paused · right-click to resume", "Throttle · no limits"])
+let many = M.DEFAULTS
+for (const n of ["aa", "bb", "cc"]) { many = M.merged(many, M.addPatch(many, n)); many = M.merged(many, M.patchFor(n, "downMbit", 5)) }
+many = M.merged(many, M.patchFor("heroic", "downMbit", 5))
+const manyStatus = { helper: "installed", applied: true, mode: "apply", iface: "eth0", error: "", apps: ["heroic", "aa", "bb", "cc"].map(k => ({ key: k, running: true, cgroups: ["x"], refused: [], shared: [] })) }
+eq("statusLine shows 3 names then +N", M.statusLine(manyStatus, many), "Limiting on eth0 · Heroic · Aa · +2 apps")
 
 console.log("\npassed " + pass + ", failed " + fail)
 process.exit(fail ? 1 : 0)
