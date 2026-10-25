@@ -182,7 +182,7 @@ Item {
     ActionRow {
       title: wrap.row.title || ""
       subtitle: wrap.row.subtitle || ""
-      chip: wrap.row.chip || ""
+      actionLabel: wrap.row.chip || ""
       confirm: wrap.row.confirm === true
       doneText: confirm ? "Cleared" : "Copied"
       hasCursor: wrap.cursorHere
