@@ -1,33 +1,31 @@
-import qs.Commons as Commons
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "../theme"
 import "../Model.js" as Model
 
-// One cap: preset chips (Off/10/25/50/100/Custom) and a Mbit/s field for Custom.
+// One cap: Off / steps / Custom chips; Custom opens a Mbit/s field inline,
+// left of the chips, so the row keeps its height and the title stays put.
 CursorSurface {
   id: root
 
   property string title: ""
-  property string subtitle: ""
   property int value: 0
-  property color contentForeground: Commons.Color.foreground
-  property string contentFontFamily: Style.font.family
-  property int edgeMargin: Style.space(6)
+  property var steps: Model.PRESETS
 
-  // Custom stays open after the user picks it even if they type a preset value.
+  // Custom stays open after the user picks it even if they type a step value.
   property bool customOpen: false
-  readonly property string selectedKey: Model.rateKey(root.value, root.customOpen)
+  readonly property string selectedKey: Model.rateKey(root.value, root.customOpen, root.steps)
   readonly property bool showField: root.selectedKey === "custom"
 
   signal rowHovered()
   signal valuePicked(int value)
   signal fieldFocusChanged(bool on)
 
-  implicitHeight: Math.max(Style.space(52), Math.max(infoCol.implicitHeight, controls.implicitHeight) + Style.space(14))
+  implicitHeight: Theme.rowHeight
   height: implicitHeight
-  foreground: contentForeground
-  fill: Style.hoverFillFor(contentForeground, Commons.Color.accent, Commons.Color.urgent)
+  foreground: Theme.fg
+  fill: Theme.hoverFill
   bordered: false
 
   function pick(key) {
@@ -41,10 +39,10 @@ CursorSurface {
     root.valuePicked(Number(key))
   }
 
-  // Keyboard h/l from the panel: step presets and leave Custom.
+  // Keyboard h/l from the panel: step through the chips and leave Custom.
   function step(delta) {
     root.customOpen = false
-    root.valuePicked(Model.stepPreset(root.value, delta))
+    root.valuePicked(Model.stepPreset(root.value, delta, root.steps))
   }
 
   MouseArea {
@@ -55,11 +53,10 @@ CursorSurface {
   }
 
   Column {
-    id: infoCol
     anchors.left: parent.left
-    anchors.leftMargin: root.edgeMargin
+    anchors.leftMargin: Theme.edge
     anchors.right: controls.left
-    anchors.rightMargin: root.edgeMargin
+    anchors.rightMargin: Theme.gap
     anchors.verticalCenter: parent.verticalCenter
     spacing: Style.space(2)
 
@@ -68,68 +65,54 @@ CursorSurface {
       elide: Text.ElideRight
       textFormat: Text.PlainText
       text: root.title
-      color: root.contentForeground
-      font.family: root.contentFontFamily
-      font.pixelSize: Style.font.body
+      color: Theme.fg
+      font.family: Theme.fontFamily
+      font.pixelSize: Theme.body
       font.bold: true
     }
     Text {
       width: parent.width
       elide: Text.ElideRight
       textFormat: Text.PlainText
-      text: root.subtitle !== "" ? root.subtitle : Model.capLabel(root.value)
-      color: Qt.darker(root.contentForeground, 1.5)
-      font.family: root.contentFontFamily
-      font.pixelSize: Style.font.caption
+      text: Model.capDetail(root.value)
+      color: Theme.dim
+      font.family: Theme.fontFamily
+      font.pixelSize: Theme.caption
     }
   }
 
-  Column {
+  Row {
     id: controls
     anchors.right: parent.right
-    anchors.rightMargin: root.edgeMargin
+    anchors.rightMargin: Theme.edge
     anchors.verticalCenter: parent.verticalCenter
     spacing: Style.space(6)
 
-    ChipRow {
-      id: chips
-      anchors.right: parent.right
-      compact: true
-      chips: Model.rateChips()
-      selectedKey: root.selectedKey
-      foreground: root.contentForeground
-      fontFamily: root.contentFontFamily
-      onSelected: function(key) { root.pick(key) }
-      onChipHovered: function(index) { root.rowHovered() }
+    NumberField {
+      id: numberField
+      anchors.verticalCenter: parent.verticalCenter
+      visible: root.showField
+      label: ""
+      value: root.value
+      from: 1
+      to: Model.MAX_MBIT
+      stepSize: 1
+      foreground: Theme.fg
+      fontFamily: Theme.fontFamily
+      fontSize: Theme.caption
+      fieldWidth: Style.space(84)
+      hasCursor: root.hasCursor && root.showField
+      onModified: function(v) { root.valuePicked(v) }
+      onHovered: function(on) { if (on) root.rowHovered() }
     }
 
-    Row {
-      anchors.right: parent.right
-      visible: root.showField
-      spacing: Style.space(6)
-
-      NumberField {
-        id: numberField
-        label: ""
-        value: root.value
-        from: 1
-        to: Model.MAX_MBIT
-        stepSize: 1
-        foreground: root.contentForeground
-        fontFamily: root.contentFontFamily
-        fieldWidth: Style.space(96)
-        hasCursor: root.hasCursor && root.showField
-        onModified: function(v) { root.valuePicked(v) }
-        onHovered: function(on) { if (on) root.rowHovered() }
-      }
-
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        text: "Mbit/s"
-        color: Qt.darker(root.contentForeground, 1.5)
-        font.family: root.contentFontFamily
-        font.pixelSize: Style.font.caption
-      }
+    ChipRow {
+      anchors.verticalCenter: parent.verticalCenter
+      compact: true
+      chips: Model.rateChips(root.steps)
+      selectedKey: root.selectedKey
+      onSelected: function(key) { root.pick(key) }
+      onChipHovered: function(index) { root.rowHovered() }
     }
   }
 

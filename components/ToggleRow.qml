@@ -1,7 +1,7 @@
-import qs.Commons as Commons
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "../theme"
 
 CursorSurface {
   id: root
@@ -9,17 +9,14 @@ CursorSurface {
   property string title: ""
   property string subtitle: ""
   property bool checked: false
-  property color contentForeground: Commons.Color.foreground
-  property string contentFontFamily: Style.font.family
-  property int edgeMargin: Style.space(6)
 
   signal rowHovered()
   signal rowClicked()
 
-  implicitHeight: Math.max(Style.space(52), infoCol.implicitHeight + Style.space(14))
+  implicitHeight: Math.max(Theme.rowHeight, infoCol.implicitHeight + Style.space(14))
   height: implicitHeight
-  foreground: contentForeground
-  fill: Style.hoverFillFor(contentForeground, Commons.Color.accent, Commons.Color.urgent)
+  foreground: Theme.fg
+  fill: Theme.hoverFill
   bordered: false
 
   MouseArea {
@@ -33,9 +30,9 @@ CursorSurface {
   Column {
     id: infoCol
     anchors.left: parent.left
-    anchors.leftMargin: root.edgeMargin
+    anchors.leftMargin: Theme.edge
     anchors.right: toggle.left
-    anchors.rightMargin: root.edgeMargin
+    anchors.rightMargin: Theme.gap
     anchors.verticalCenter: parent.verticalCenter
     spacing: Style.space(2)
 
@@ -44,9 +41,9 @@ CursorSurface {
       elide: Text.ElideRight
       textFormat: Text.PlainText
       text: root.title
-      color: root.contentForeground
-      font.family: root.contentFontFamily
-      font.pixelSize: Style.font.body
+      color: Theme.fg
+      font.family: Theme.fontFamily
+      font.pixelSize: Theme.body
       font.bold: true
     }
     Text {
@@ -55,16 +52,16 @@ CursorSurface {
       wrapMode: Text.WordWrap
       textFormat: Text.PlainText
       text: root.subtitle
-      color: Qt.darker(root.contentForeground, 1.5)
-      font.family: root.contentFontFamily
-      font.pixelSize: Style.font.caption
+      color: Theme.dim
+      font.family: Theme.fontFamily
+      font.pixelSize: Theme.caption
     }
   }
 
   ToggleSwitch {
     id: toggle
     anchors.right: parent.right
-    anchors.rightMargin: root.edgeMargin
+    anchors.rightMargin: Theme.edge
     anchors.verticalCenter: parent.verticalCenter
     checked: root.checked
     interactive: false

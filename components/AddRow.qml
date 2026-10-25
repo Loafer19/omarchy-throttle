@@ -1,17 +1,14 @@
-import qs.Commons as Commons
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "../theme"
 import "../Model.js" as Model
 
-// "Add an app" by process name (as in `ps -o comm`, up to 15 characters).
+// "+ Add" by process name (as in `ps -o comm`, up to 15 characters).
 CursorSurface {
   id: root
 
   property var cfg: null
-  property color contentForeground: Commons.Color.foreground
-  property string contentFontFamily: Style.font.family
-  property int edgeMargin: Style.space(6)
 
   readonly property string name: input.text.trim()
   readonly property string problem: {
@@ -28,8 +25,8 @@ CursorSurface {
 
   implicitHeight: col.implicitHeight + Style.space(14)
   height: implicitHeight
-  foreground: contentForeground
-  fill: Style.hoverFillFor(contentForeground, Commons.Color.accent, Commons.Color.urgent)
+  foreground: Theme.fg
+  fill: Theme.hoverFill
   bordered: false
 
   function focusField() { input.forceActiveFocus() }
@@ -37,6 +34,7 @@ CursorSurface {
     if (!root.canSubmit) return
     root.submitted(root.name)
     input.text = ""
+    input.focus = false
   }
 
   MouseArea {
@@ -50,24 +48,24 @@ CursorSurface {
     id: col
     anchors.left: parent.left
     anchors.right: parent.right
-    anchors.leftMargin: root.edgeMargin
-    anchors.rightMargin: root.edgeMargin
+    anchors.leftMargin: Theme.edge
+    anchors.rightMargin: Theme.edge
     anchors.verticalCenter: parent.verticalCenter
     spacing: Style.space(4)
 
     Row {
       width: parent.width
-      spacing: Style.space(8)
+      spacing: Theme.gap
 
       TextField {
         id: input
-        width: parent.width - addChip.width - Style.space(8)
+        width: parent.width - addChip.width - Theme.gap
         anchors.verticalCenter: parent.verticalCenter
         placeholderText: "Process name, e.g. qbittorrent"
         maximumLength: 32
-        foreground: root.contentForeground
-        font.family: root.contentFontFamily
-        font.pixelSize: Style.font.caption
+        foreground: Theme.fg
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.caption
         hasCursor: root.hasCursor
         onAccepted: root.submit()
         onActiveFocusChanged: root.fieldFocusChanged(activeFocus)
@@ -80,9 +78,7 @@ CursorSurface {
         text: "Add"
         enabled: root.canSubmit
         on: root.canSubmit
-        contentForeground: root.contentForeground
-        contentFontFamily: root.contentFontFamily
-        tooltipText: "Add this program to the Apps list (no cap until you set one)"
+        tooltipText: "Add this program (no cap until you set one)"
         onClicked: root.submit()
       }
     }
@@ -93,9 +89,9 @@ CursorSurface {
       wrapMode: Text.WordWrap
       textFormat: Text.PlainText
       text: root.problem
-      color: Commons.Color.urgent
-      font.family: root.contentFontFamily
-      font.pixelSize: Style.font.caption
+      color: Theme.urgent
+      font.family: Theme.fontFamily
+      font.pixelSize: Theme.caption
     }
   }
 }

@@ -1,9 +1,10 @@
-import qs.Commons as Commons
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "../theme"
 import "../Model.js" as Model
 
+// Traffic rows (live rates or byte totals) and "+ Add" candidates.
 CursorSurface {
   id: root
 
@@ -12,35 +13,35 @@ CursorSurface {
   property real up: 0
   property int conns: 0
   property real peak: 1
-  property bool limited: false
-  // Stats rows show byte totals instead of rates.
+  property int capDown: 0
+  property int capUp: 0
+  property string units: "mbit"
+  // History rows show byte totals instead of rates.
   property bool bytes: false
   property bool muted: false
-  property bool showBar: true
-  // Optional chip on the right ("Add" for candidate apps).
+  property bool showBar: false
+  // Optional chip on the right ("Add").
   property string actionText: ""
   property string actionTooltip: ""
-  property color contentForeground: Commons.Color.foreground
-  property string contentFontFamily: Style.font.family
-  property int edgeMargin: Style.space(6)
 
   signal rowHovered()
+  signal rowClicked()
   signal actionClicked()
 
-  implicitHeight: Style.space(40)
+  implicitHeight: Theme.dataRowHeight
   height: implicitHeight
-  foreground: contentForeground
-  fill: Style.hoverFillFor(contentForeground, Commons.Color.accent, Commons.Color.urgent)
+  foreground: Theme.fg
+  fill: Theme.hoverFill
   bordered: false
 
   MouseArea {
     anchors.fill: parent
     hoverEnabled: true
-    acceptedButtons: Qt.NoButton
     onContainsMouseChanged: if (containsMouse) root.rowHovered()
+    onClicked: root.rowClicked()
   }
 
-  // Background bar: share of the busiest row, so the hog is obvious at a glance.
+  // Share of the busiest row (history ranges), so the hog is obvious at a glance.
   Rectangle {
     anchors.left: parent.left
     anchors.top: parent.top
@@ -49,24 +50,21 @@ CursorSurface {
     width: parent.width * Math.min(1, (root.down + root.up) / Math.max(1, root.peak))
     // A few-pixel sliver reads as a stray edge line, not as a share.
     visible: root.showBar && width >= Math.max(radius * 2, Style.space(12))
-    color: Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.14)
-    Behavior on width { NumberAnimation { duration: 250 } }
+    color: Theme.tint(Theme.accent, 0.10)
   }
 
-  // Name keeps priority: the "limited · N conns" suffix is small and drops
-  // out first; a name that still doesn't fit ends in "…".
+  // Name keeps priority: the cap tags and "N conns" drop out first.
   Item {
     id: nameBox
     anchors.left: parent.left
-    anchors.leftMargin: root.edgeMargin
+    anchors.leftMargin: Theme.edge
     anchors.right: rates.left
-    anchors.rightMargin: root.edgeMargin
+    anchors.rightMargin: Theme.gap
     anchors.verticalCenter: parent.verticalCenter
     height: nameText.implicitHeight
 
-    readonly property string suffix: (root.limited ? "limited" : "")
-      + (root.limited && root.conns > 1 ? " · " : "") + (root.conns > 1 ? root.conns + " conns" : "")
-    readonly property bool suffixFits: suffix !== "" && nameText.implicitWidth + suffixText.implicitWidth + Style.space(10) <= width
+    readonly property bool capped: root.capDown > 0 || root.capUp > 0
+    readonly property bool extraFits: nameText.implicitWidth + extra.implicitWidth + Style.space(8) <= width
 
     Text {
       id: nameText
@@ -76,46 +74,52 @@ CursorSurface {
       elide: Text.ElideRight
       textFormat: Text.PlainText
       text: root.name
-      color: root.muted ? Qt.darker(root.contentForeground, 1.5) : root.contentForeground
-      font.family: root.contentFontFamily
-      font.pixelSize: Style.font.body
+      color: root.muted ? Theme.dim : Theme.fg
+      font.family: Theme.fontFamily
+      font.pixelSize: Theme.body
     }
-    Text {
-      id: suffixText
-      visible: nameBox.suffixFits
+    Row {
+      id: extra
+      visible: nameBox.extraFits && (nameBox.capped || root.conns > 1)
       anchors.left: nameText.right
-      anchors.leftMargin: Style.space(10)
-      anchors.baseline: nameText.baseline
-      textFormat: Text.PlainText
-      text: nameBox.suffix
-      color: Qt.darker(root.contentForeground, 1.5)
-      font.family: root.contentFontFamily
-      font.pixelSize: Style.font.caption
+      anchors.leftMargin: Style.space(8)
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(4)
+      CapTag { anchors.verticalCenter: parent.verticalCenter; arrow: "↓"; value: root.capDown; showOff: false }
+      CapTag { anchors.verticalCenter: parent.verticalCenter; arrow: "↑"; value: root.capUp; showOff: false }
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        visible: root.conns > 1
+        text: root.conns + " conns"
+        color: Theme.faint
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.caption
+      }
     }
   }
 
   Row {
     id: rates
     anchors.right: action.visible ? action.left : parent.right
-    anchors.rightMargin: root.edgeMargin
+    anchors.rightMargin: Theme.edge
     anchors.verticalCenter: parent.verticalCenter
     spacing: Style.space(10)
 
     Text {
-      width: Style.space(96)
+      width: Style.space(86)
       horizontalAlignment: Text.AlignRight
-      text: "↓ " + (root.bytes ? Model.formatBytes(root.down) : Model.formatRate(root.down))
-      color: root.down > 0 ? root.contentForeground : Qt.darker(root.contentForeground, 1.8)
-      font.family: root.contentFontFamily
-      font.pixelSize: Style.font.caption
+      text: "↓ " + (root.bytes ? Model.formatBytes(root.down) : Model.formatRate(root.down, root.units))
+      color: root.down > 0 ? Theme.fg : Theme.faint
+      font.family: Theme.fontFamily
+      font.pixelSize: Theme.caption
     }
     Text {
-      width: Style.space(96)
+      width: Style.space(86)
       horizontalAlignment: Text.AlignRight
-      text: "↑ " + (root.bytes ? Model.formatBytes(root.up) : Model.formatRate(root.up))
-      color: root.up > 0 ? root.contentForeground : Qt.darker(root.contentForeground, 1.8)
-      font.family: root.contentFontFamily
-      font.pixelSize: Style.font.caption
+      text: "↑ " + (root.bytes ? Model.formatBytes(root.up) : Model.formatRate(root.up, root.units))
+      color: root.up > 0 ? Theme.dim : Theme.faint
+      font.family: Theme.fontFamily
+      font.pixelSize: Theme.caption
     }
   }
 
@@ -123,12 +127,10 @@ CursorSurface {
     id: action
     visible: root.actionText !== ""
     anchors.right: parent.right
-    anchors.rightMargin: root.edgeMargin
+    anchors.rightMargin: Theme.edge
     anchors.verticalCenter: parent.verticalCenter
     text: root.actionText
     on: root.hasCursor
-    contentForeground: root.contentForeground
-    contentFontFamily: root.contentFontFamily
     tooltipText: root.actionTooltip
     onClicked: root.actionClicked()
   }

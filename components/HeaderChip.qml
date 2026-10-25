@@ -1,8 +1,9 @@
-import qs.Commons as Commons
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "../theme"
 
+// Small action chip (same look as System Tidy / Notification Center).
 Rectangle {
   id: root
 
@@ -10,17 +11,13 @@ Rectangle {
   property string tooltipText: ""
   property bool on: false
   property bool enabled: true
-  // When on+danger, fill with Commons.Color.urgent (destructive confirms like Empty trash).
+  // When on+danger, fill with urgent (destructive confirms like Remove).
   property bool danger: false
-  property color contentForeground: Commons.Color.foreground
-  property string contentFontFamily: Style.font.family
 
   signal clicked()
 
-  readonly property color activeFill: root.danger ? Commons.Color.urgent : Commons.Color.accent
-  readonly property color hoverFill: Style.hoverFillFor(contentForeground, Commons.Color.accent, Commons.Color.urgent)
-  readonly property color idleFill: Style.normalFillFor(contentForeground, Commons.Color.accent, Commons.Color.urgent)
-  readonly property color borderIdle: Qt.rgba(contentForeground.r, contentForeground.g, contentForeground.b, 0.12)
+  readonly property color activeFill: root.danger ? Theme.urgent : Theme.accent
+  readonly property color idleFill: Style.normalFillFor(Theme.fg, Theme.accent, Theme.urgent)
 
   width: label.implicitWidth + Style.space(16)
   height: Style.space(24)
@@ -29,18 +26,18 @@ Rectangle {
   color: {
     if (!root.enabled) return root.idleFill
     if (root.on) return chipMouse.containsMouse ? Qt.darker(root.activeFill, 1.08) : root.activeFill
-    return chipMouse.containsMouse ? root.hoverFill : root.idleFill
+    return chipMouse.containsMouse ? Theme.hoverFill : root.idleFill
   }
   border.width: Style.spacing.hairline
-  border.color: root.on && root.enabled ? root.activeFill : root.borderIdle
+  border.color: root.on && root.enabled ? root.activeFill : Theme.line
 
   Text {
     id: label
     anchors.centerIn: parent
     text: root.text
-    color: root.on && root.enabled ? Commons.Color.background : root.contentForeground
-    font.family: root.contentFontFamily
-    font.pixelSize: Style.font.caption
+    color: root.on && root.enabled ? Theme.background : Theme.fg
+    font.family: Theme.fontFamily
+    font.pixelSize: Theme.caption
     font.bold: true
   }
 
@@ -56,6 +53,6 @@ Rectangle {
   PanelToolTip {
     visible: root.tooltipText !== "" && chipMouse.containsMouse
     text: root.tooltipText
-    fontFamily: root.contentFontFamily
+    fontFamily: Theme.fontFamily
   }
 }

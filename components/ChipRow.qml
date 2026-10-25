@@ -1,16 +1,17 @@
-import qs.Commons as Commons
 import QtQuick
 import qs.Commons
+import "../theme"
 
-// Fill-only chips; cursor via cursorIndex (not containsMouse).
+// Fill-only chips; cursor via cursorIndex (not containsMouse). Same as the
+// tab / filter chips in System Tidy and Notification Center.
 Row {
   id: root
 
   property var chips: []
   property string selectedKey: ""
   property bool compact: false
-  property color foreground: Commons.Color.foreground
-  property string fontFamily: Style.font.family
+  property color foreground: Theme.fg
+  property string fontFamily: Theme.fontFamily
   property int cursorIndex: -1
   property bool cursorActive: false
 
@@ -19,8 +20,8 @@ Row {
 
   spacing: compact ? Style.space(6) : Style.space(4)
 
-  readonly property color selectedFill: Style.selectedFillFor(foreground, Commons.Color.accent, Commons.Color.urgent)
-  readonly property color hoverFill: Style.hoverFillFor(foreground, Commons.Color.accent, Commons.Color.urgent)
+  readonly property color selectedFill: Style.selectedFillFor(foreground, Theme.accent, Theme.urgent)
+  readonly property color hoverFill: Style.hoverFillFor(foreground, Theme.accent, Theme.urgent)
   readonly property color idleBorder: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.12)
 
   Repeater {
@@ -51,7 +52,6 @@ Row {
       }
 
       MouseArea {
-        id: chipMouse
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
