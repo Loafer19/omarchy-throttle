@@ -1,6 +1,6 @@
 import QtQuick
 import qs.Commons
-import "../theme"
+import "../vendor/yoyo-ui"
 import "../Model.js" as Model
 
 // "↓ 21.4 Mbit/s  ↑ 768 kbit/s" (or byte totals) with a caption on the right.

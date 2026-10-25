@@ -1,6 +1,6 @@
 import QtQuick
 import qs.Commons
-import "../theme"
+import "../vendor/yoyo-ui"
 
 // "↓ 10" cap tag: accent outline when set, faint "↓ Off" when not.
 Rectangle {

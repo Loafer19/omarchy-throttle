@@ -96,3 +96,11 @@ sudo bash ~/.config/omarchy/plugins/yoyo.throttle/scripts/uninstall.sh
 omarchy plugin remove yoyo.throttle
 rm -rf ~/.local/state/omarchy/yoyo.throttle
 ```
+
+## Development
+
+The theme, chips, action rows, empty states and key hints come from
+[omarchy-yoyo-ui](https://github.com/Loafer19/omarchy-yoyo-ui), vendored in
+`vendor/yoyo-ui/` (pinned in `vendor/yoyo-ui/VERSION`). Don't edit it here:
+change the library, tag it, then `tools/sync-ui.sh <tag>`. `tests/unit.sh`
+fails if the vendored copy was edited by hand.

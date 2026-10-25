@@ -1,6 +1,6 @@
 import QtQuick
 import qs.Commons
-import "../theme"
+import "../vendor/yoyo-ui"
 import "../Model.js" as Model
 
 // Traffic › Live: download over the last 90 s, stacked per app (top four by

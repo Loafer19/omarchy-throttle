@@ -1,7 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
-import "../theme"
+import "../vendor/yoyo-ui"
 
 // Settings: title + one-line caption, the options as compact chips.
 CursorSurface {

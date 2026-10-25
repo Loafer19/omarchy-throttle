@@ -1,6 +1,5 @@
 import QtQuick
 import qs.Commons
-import "../theme"
 
 // One look for every "nothing here yet" (lists, ranges, measuring).
 Column {
@@ -8,6 +7,7 @@ Column {
 
   property string title: ""
   property string subtitle: ""
+  property string fontFamily: Theme.fontFamily
 
   topPadding: Style.space(24)
   bottomPadding: Style.space(16)
@@ -20,7 +20,7 @@ Column {
     textFormat: Text.PlainText
     text: root.title
     color: Theme.dim
-    font.family: Theme.fontFamily
+    font.family: root.fontFamily
     font.pixelSize: Theme.body
   }
   Text {
@@ -31,7 +31,7 @@ Column {
     textFormat: Text.PlainText
     text: root.subtitle
     color: Theme.faint
-    font.family: Theme.fontFamily
+    font.family: root.fontFamily
     font.pixelSize: Theme.caption
   }
 }

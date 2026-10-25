@@ -234,6 +234,11 @@ expect_match "conntrack accounting enabled for bulk mode" "$out" "echo 1 > /proc
 expect "refuses real run without root" "$(bash "$helper" clear 2>&1; echo "rc=$?")" $'throttle-helper: must run as root (via sudo)\nrc=2'
 expect "test overrides ignored under sudo" "$(SUDO_UID=$uid THROTTLE_TEST=1 THROTTLE_TEST_UID=4242 bash "$helper" --dry-run apply --iface eth0 --down 0 --up 0 --app "heroic:1000:0:all:4:user.slice/user-4242.slice/user@4242.service/x.scope" 2>&1; echo "rc=$?")" $'throttle-helper: bad cgroup path: user.slice/user-4242.slice/user@4242.service/x.scope\nrc=2'
 
+echo "== vendored omarchy-yoyo-ui"
+out=$(bash "$root/tools/sync-ui.sh" --check 2>&1); rc=$?
+expect "vendor/yoyo-ui untouched (tools/sync-ui.sh --check)" "rc=$rc" "rc=0"
+[[ $rc == 0 ]] || echo "$out"
+
 echo
 echo "passed $pass, failed $fail"
 (( fail == 0 ))

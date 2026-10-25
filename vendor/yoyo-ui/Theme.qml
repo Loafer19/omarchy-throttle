@@ -1,12 +1,13 @@
 pragma Singleton
 
-import qs.Commons as Commons
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
-// One place for the panel's colour roles, type and row metrics, so the rows
-// stop carrying contentForeground / contentFontFamily / edgeMargin around.
-// Panel.qml binds foreground and fontFamily to the bar it opens from.
+// Colour roles, type sizes and row metrics for an Omarchy plugin panel.
+// Everything is derived from qs.Commons (Color + Style): no custom colours.
+// The plugin's Panel.qml binds foreground / fontFamily to the bar it opens
+// from (see README). Each vendored copy is its own singleton instance.
 QtObject {
   property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
@@ -20,13 +21,15 @@ QtObject {
   readonly property color background: Commons.Color.background
   readonly property color line: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.12)
   readonly property color hoverFill: Style.hoverFillFor(foreground, Commons.Color.accent, Commons.Color.urgent)
+  readonly property color normalFill: Style.normalFillFor(foreground, Commons.Color.accent, Commons.Color.urgent)
+  readonly property color selectedFill: Style.selectedFillFor(foreground, Commons.Color.accent, Commons.Color.urgent)
 
   function tint(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
 
-  // Same edge as System Tidy / Notification Center.
+  // Edges and gaps shared by Throttle / System Tidy / Notification Center.
   readonly property int edge: Style.spacing.md
   readonly property int gap: Style.spacing.lg
-  // Rows: settings-like rows, compact data rows (traffic, stats), small rows.
+  // Rows: settings-like rows, compact data rows, small rows.
   readonly property int rowHeight: Style.space(44)
   readonly property int dataRowHeight: Style.space(36)
   readonly property int smallRowHeight: Style.space(28)

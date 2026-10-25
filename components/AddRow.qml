@@ -1,7 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
-import "../theme"
+import "../vendor/yoyo-ui"
 import "../Model.js" as Model
 
 // "+ Add" by process name (as in `ps -o comm`, up to 15 characters).

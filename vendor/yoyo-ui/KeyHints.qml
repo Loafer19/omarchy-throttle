@@ -1,12 +1,12 @@
 import QtQuick
 import qs.Commons
-import "../theme"
 
-// Footer: "Tab tabs · h l sub-tabs · j k rows · Enter open · p pause".
+// Footer hints: [["Tab", "tabs"], ["j k", "rows"], ["Enter", "open"]].
 Row {
   id: root
 
   property var hints: []
+  property string fontFamily: Theme.fontFamily
 
   spacing: Style.space(10)
 
@@ -18,14 +18,14 @@ Row {
       Text {
         text: modelData[0]
         color: Theme.dim
-        font.family: Theme.fontFamily
+        font.family: root.fontFamily
         font.pixelSize: Theme.caption
         font.bold: true
       }
       Text {
         text: modelData[1]
         color: Theme.faint
-        font.family: Theme.fontFamily
+        font.family: root.fontFamily
         font.pixelSize: Theme.caption
       }
     }

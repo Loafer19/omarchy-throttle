@@ -3,7 +3,7 @@ import Quickshell
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
-import "theme"
+import "vendor/yoyo-ui"
 import "components" as Throttle
 
 // Two-level tabs: Limits (Apps · Connection · + Add), Traffic (Live · Today ·
@@ -382,7 +382,7 @@ Panel {
         anchors.right: parent.right
         spacing: Style.space(8)
 
-        Throttle.ChipRow {
+        ChipRow {
           chips: root.tabs
           selectedKey: root.activeTab
           cursorActive: root.cursorActive && root.focusSection === "tabs"
@@ -414,7 +414,7 @@ Panel {
             font.pixelSize: Theme.caption
           }
 
-          Throttle.HeaderChip {
+          HeaderChip {
             id: onChip
             anchors.right: parent.right
             anchors.rightMargin: Theme.edge
@@ -470,7 +470,7 @@ Panel {
                 font.pixelSize: Theme.caption
               }
 
-              Throttle.HeaderChip {
+              HeaderChip {
                 id: copyChip
                 anchors.verticalCenter: parent.verticalCenter
                 text: copied.running ? "Copied" : "Copy"
@@ -491,7 +491,7 @@ Panel {
           visible: root.subtabs.length > 0
           height: visible ? Style.space(24) : 0
 
-          Throttle.ChipRow {
+          ChipRow {
             id: subChips
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
@@ -545,7 +545,7 @@ Panel {
         strength: 0.08
       }
 
-      Throttle.KeyHints {
+      KeyHints {
         id: footer
         anchors.bottom: parent.bottom
         anchors.left: parent.left

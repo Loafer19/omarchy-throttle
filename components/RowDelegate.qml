@@ -1,6 +1,6 @@
 import QtQuick
 import qs.Commons
-import "../theme"
+import "../vendor/yoyo-ui"
 
 // One row of the panel's single ListView; the row's "kind" picks the
 // component. Refreshed row arrays update rows in place (same kind → same
@@ -184,6 +184,7 @@ Item {
       subtitle: wrap.row.subtitle || ""
       chip: wrap.row.chip || ""
       confirm: wrap.row.confirm === true
+      doneText: confirm ? "Cleared" : "Copied"
       hasCursor: wrap.cursorHere
       onRowHovered: wrap.hover()
       onTriggered: wrap.panel.runAction(wrap.row)

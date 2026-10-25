@@ -1,6 +1,6 @@
 import QtQuick
 import qs.Commons
-import "../theme"
+import "../vendor/yoyo-ui"
 
 // limited (accent) · running (fg) · idle (faint) · refused (urgent)
 Rectangle {

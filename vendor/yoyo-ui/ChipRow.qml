@@ -1,9 +1,8 @@
 import QtQuick
 import qs.Commons
-import "../theme"
 
-// Fill-only chips; cursor via cursorIndex (not containsMouse). Same as the
-// tab / filter chips in System Tidy and Notification Center.
+// Fill-only tab / filter chips. Keyboard cursor via cursorIndex (not
+// containsMouse); chips: [{ key, label }].
 Row {
   id: root
 

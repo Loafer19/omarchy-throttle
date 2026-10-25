@@ -1,7 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
-import "../theme"
+import "../vendor/yoyo-ui"
 import "../Model.js" as Model
 
 // Traffic rows (live rates or byte totals) and "+ Add" candidates.

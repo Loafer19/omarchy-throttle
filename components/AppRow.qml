@@ -1,7 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
-import "../theme"
+import "../vendor/yoyo-ui"
 
 // Limits › Apps: one compact row per app (or the whole-connection link).
 // Enter / click drills into the app.

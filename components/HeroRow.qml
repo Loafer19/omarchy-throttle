@@ -1,7 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
-import "../theme"
+import "../vendor/yoyo-ui"
 
 // Top of an app's detail page: name, live state, its processes, the live
 // rate against the cap, and (custom apps) Remove, which asks once.

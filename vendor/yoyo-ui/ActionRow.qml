@@ -1,9 +1,10 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
-import "../theme"
 
-// Settings: title + caption and one chip. "confirm" rows ask once (3 s).
+// Title + caption and one chip. confirm rows ask once: the first activate()
+// arms the chip ("Confirm", urgent) for armMs, the second one triggers.
+// After triggering, the chip shows doneText (if set) for doneMs.
 CursorSurface {
   id: root
 
@@ -13,6 +14,11 @@ CursorSurface {
   property bool confirm: false
   property bool armed: false
   property bool done: false
+  property string confirmText: "Confirm"
+  property string confirmTooltip: "Click again to confirm"
+  property string doneText: ""
+  property int armMs: 3000
+  property int doneMs: 1500
 
   signal rowHovered()
   signal triggered()
@@ -26,12 +32,13 @@ CursorSurface {
   function activate() {
     if (root.confirm && !root.armed) { root.armed = true; disarm.restart(); return }
     root.armed = false
+    disarm.stop()
     root.triggered()
     root.done = true
     doneTimer.restart()
   }
-  Timer { id: disarm; interval: 3000; onTriggered: root.armed = false }
-  Timer { id: doneTimer; interval: 1500; onTriggered: root.done = false }
+  Timer { id: disarm; interval: root.armMs; onTriggered: root.armed = false }
+  Timer { id: doneTimer; interval: root.doneMs; onTriggered: root.done = false }
   onHasCursorChanged: if (!hasCursor) armed = false
 
   MouseArea {
@@ -75,10 +82,10 @@ CursorSurface {
     anchors.right: parent.right
     anchors.rightMargin: Theme.edge
     anchors.verticalCenter: parent.verticalCenter
-    text: root.armed ? "Confirm" : (root.done ? (root.confirm ? "Cleared" : "Copied") : root.chip)
+    text: root.armed ? root.confirmText : (root.done && root.doneText !== "" ? root.doneText : root.chip)
     on: root.armed || root.hasCursor
     danger: root.confirm && root.armed
-    tooltipText: root.armed ? "Click again to confirm" : ""
+    tooltipText: root.armed ? root.confirmTooltip : ""
     onClicked: root.activate()
   }
 }

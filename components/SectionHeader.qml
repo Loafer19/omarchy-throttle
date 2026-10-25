@@ -1,7 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
-import "../theme"
+import "../vendor/yoyo-ui"
 
 // Section label (the shell's PanelSectionHeader) with an optional caption on the right.
 Item {

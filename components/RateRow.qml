@@ -1,7 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
-import "../theme"
+import "../vendor/yoyo-ui"
 import "../Model.js" as Model
 
 // One cap: Off / steps / Custom chips; Custom opens a Mbit/s field inline,
