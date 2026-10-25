@@ -307,6 +307,17 @@ ss_deltas() {
     printf '#cur\n'
     printf '%s\n' "$sample"
   } | YT_LABELS=$(label_table) awk -v mode="$mode" -v maxgap="${THROTTLE_STATS_MAXGAP_S:-900}" -v prevout="$prev_file.new" '
+    # comm is cut at 15 chars ("telegram-deskto"); show the executable name
+    # instead when it starts with the same text ("telegram-desktop").
+    function fullname(n, p,   f, line) {
+      if (length(n) < 15 || p == "" || ENVIRON["THROTTLE_SS_FIXTURE"] != "") return n
+      f = "/proc/" p "/cmdline"
+      RS_save = RS; RS = "\0"
+      if ((getline line < f) > 0) { sub(/.*\//, "", line) }
+      close(f); RS = RS_save
+      if (line != "" && line ~ /^[A-Za-z0-9][A-Za-z0-9 ._+:-]*$/ && length(line) <= 32 && tolower(substr(line, 1, 15)) == tolower(n)) return line
+      return n
+    }
     function jstr(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return "\"" s "\"" }
     BEGIN {
       n = split(ENVIRON["YT_LABELS"], L, "\n")
@@ -319,10 +330,11 @@ ss_deltas() {
     section == "prev" { pin[$1] = $2; pout[$1] = $3; next }
     section != "cur" { next }
     /^[^ \t]/ {
-      ino = ""; name = ""; cg = ""; own = 1
+      ino = ""; name = ""; cg = ""; own = 1; pid = ""
       if ($4 ~ /^(127\.|\[::1\]|\[::ffff:127\.)/) next
       if (match($0, /ino:[0-9]+/)) ino = substr($0, RSTART + 4, RLENGTH - 4)
       if (match($0, /users:\(\("[^"]+"/)) name = substr($0, RSTART + 9, RLENGTH - 10)
+      if (match($0, /",pid=[0-9]+/)) pid = substr($0, RSTART + 6, RLENGTH - 6)
       if (match($0, /cgroup:[^ ]+/)) cg = substr($0, RSTART + 7, RLENGTH - 7)
       if (name == "") {
         # Not our process (root daemon etc.): label by its systemd unit.
@@ -339,7 +351,7 @@ ss_deltas() {
       if (match($0, /bytes_acked:[0-9]+/)) bout = substr($0, RSTART + 12, RLENGTH - 12)
       print ino, bin, bout > prevout
       g = (own && (name in llab)) ? llab[name] : name
-      if (!(g in conns)) { gkey[g] = (own && (name in lkey)) ? lkey[name] : ""; gown[g] = own; gproc[g] = name }
+      if (!(g in conns)) { gkey[g] = (own && (name in lkey)) ? lkey[name] : ""; gown[g] = own; gproc[g] = name; gfull[g] = fullname(name, pid) }
       if (pnow != "") {
         din = (ino in pin) ? bin - pin[ino] : bin
         dout = (ino in pout) ? bout - pout[ino] : bout
@@ -368,8 +380,8 @@ ss_deltas() {
       first = 1
       for (g in conns) {
         d = (dt > 0) ? gin[g] / dt : 0; u = (dt > 0) ? gout[g] / dt : 0
-        printf "%s{\"name\":%s,\"key\":%s,\"proc\":%s,\"own\":%s,\"down\":%d,\"up\":%d,\"conns\":%d}", (first ? "" : ","),
-          jstr(g), jstr(gkey[g]), jstr(gproc[g]), (gown[g] ? "true" : "false"), d, u, conns[g]
+        printf "%s{\"name\":%s,\"key\":%s,\"proc\":%s,\"full\":%s,\"own\":%s,\"down\":%d,\"up\":%d,\"conns\":%d}", (first ? "" : ","),
+          jstr(g), jstr(gkey[g]), jstr(gproc[g]), jstr(gfull[g]), (gown[g] ? "true" : "false"), d, u, conns[g]
         first = 0
       }
       printf "]}\n"

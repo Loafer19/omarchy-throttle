@@ -16,8 +16,8 @@ CursorSurface {
   readonly property string name: input.text.trim()
   readonly property string problem: {
     if (root.name === "") return ""
-    if (!Model.validProc(root.name)) return "Not allowed: letters, digits, space . _ + : - (max 15), no shells or system services"
-    if (Model.knownProc(root.cfg, root.name)) return "Already in the list"
+    if (!Model.validName(root.name)) return "Not allowed: letters, digits, space . _ + : -, no shells or system services"
+    if (Model.knownProc(root.cfg, Model.procOf(root.name))) return "Already in the list"
     return ""
   }
   readonly property bool canSubmit: root.name !== "" && root.problem === ""
@@ -64,7 +64,7 @@ CursorSurface {
         width: parent.width - addChip.width - Style.space(8)
         anchors.verticalCenter: parent.verticalCenter
         placeholderText: "Process name, e.g. qbittorrent"
-        maximumLength: 15
+        maximumLength: 32
         foreground: root.contentForeground
         font.family: root.contentFontFamily
         font.pixelSize: Style.font.caption

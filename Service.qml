@@ -65,8 +65,8 @@ Item {
   function toggleEnabled() { root.setEnabled(!(root.cfg && root.cfg.enabled !== false)) }
   function setGlobal(field, mbit) { root.setPatch(Model.patchFor("", field, Model.clampMbit(mbit))) }
   function setApp(app, field, value) { root.setPatch(Model.patchFor(app, field, value)) }
-  function addApp(proc) {
-    var p = Model.addPatch(root.cfg, proc)
+  function addApp(proc, label) {
+    var p = Model.addPatch(root.cfg, proc, label)
     if (p) root.setPatch(p)
     return p !== null
   }

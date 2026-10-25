@@ -76,14 +76,23 @@ function prettyLabel(proc) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s
 }
 
+// The kernel keeps 15 characters of a process name ("telegram-deskto");
+// a longer typed or resolved name is matched by its first 15 and kept as label.
+function procOf(name) { return String(name || "").trim().slice(0, 15) }
+function validName(name) {
+  var n = String(name || "").trim()
+  return n.length <= 32 && /^[A-Za-z0-9][A-Za-z0-9 ._+:-]*$/.test(n) && validProc(procOf(n))
+}
+
 // Patch that adds a custom app for one process name, or null if not allowed.
-function addPatch(cfg, proc) {
-  var name = String(proc || "").trim()
-  if (!validProc(name) || knownProc(cfg, name) || !canAdd(cfg)) return null
-  var key = slugKey(name, cfg)
+function addPatch(cfg, nameIn, labelIn) {
+  var full = String(labelIn || nameIn || "").trim()
+  var name = procOf(nameIn)
+  if (!validName(nameIn) || knownProc(cfg, name) || !canAdd(cfg)) return null
+  var key = slugKey(full, cfg)
   if (!KEY_RE.test(key)) return null
   var p = { apps: {} }
-  p.apps[key] = { label: prettyLabel(name), procs: [name], downMbit: 0, upMbit: 0,
+  p.apps[key] = { label: prettyLabel(full.slice(0, 32)), procs: [name], downMbit: 0, upMbit: 0,
     gamesSafe: DEFAULTS.custom.gamesSafe, bulkMiB: DEFAULTS.custom.bulkMiB, preset: false }
   return p
 }
@@ -101,7 +110,7 @@ function candidates(traffic, cfg) {
   for (var i = 0; i < list.length && out.length < 6; i++) {
     var t = list[i]
     if (!t.own || t.key || !validProc(t.proc) || knownProc(cfg, t.proc)) continue
-    out.push({ proc: t.proc, down: t.down || 0, up: t.up || 0, conns: t.conns || 0 })
+    out.push({ proc: t.proc, full: t.full || t.proc, down: t.down || 0, up: t.up || 0, conns: t.conns || 0 })
   }
   return out
 }
@@ -210,7 +219,7 @@ function appRows(cfg, status, traffic) {
   rows.push({ kind: "section", title: "Add an app", subtitle: "Programs with open connections right now, or type a process name" })
   var c = candidates(traffic, cfg)
   for (var j = 0; j < c.length; j++)
-    rows.push({ kind: "candidate", proc: c[j].proc, title: c[j].proc, down: c[j].down, up: c[j].up, conns: c[j].conns })
+    rows.push({ kind: "candidate", proc: c[j].proc, title: c[j].full, down: c[j].down, up: c[j].up, conns: c[j].conns })
   rows.push({ kind: "addfield", title: "Process name" })
   return rows
 }

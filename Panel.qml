@@ -107,7 +107,7 @@ Panel {
 
   function limitedName(name) { return Model.labelCapped(cfg, name) }
 
-  function addApp(proc) { if (store) store.addApp(proc) }
+  function addApp(proc, label) { if (store) store.addApp(proc, label) }
   function removeApp(key) { if (store) store.removeApp(key) }
 
   function stepRange(dx) {
@@ -220,7 +220,7 @@ Panel {
     var r = activeRows[selectedIndex]
     var item = rowItem(selectedIndex)
     if (r && r.kind === "header") { if (item && item.activate) item.activate(); return }
-    if (r && r.kind === "candidate") { addApp(r.proc); return }
+    if (r && r.kind === "candidate") { addApp(r.proc, r.title); return }
     if (r && r.kind === "addfield") { if (item && item.focusField) item.focusField(); return }
     if (r && (r.kind === "stat" || r.kind === "range")) return
     nudge(1)
@@ -552,6 +552,7 @@ Panel {
               up: appWrap.modelData.up || 0
               conns: appWrap.modelData.conns || 0
               peak: root.trafficPeak
+              showBar: false
               actionText: "Add"
               actionTooltip: "Add " + (appWrap.modelData.title || "") + " to the Apps list (no cap until you set one)"
               contentForeground: root.contentForeground
@@ -559,7 +560,7 @@ Panel {
               edgeMargin: root.edgeMargin
               hasCursor: appWrap.cursorHere
               onRowHovered: root.setRowCursor(appWrap.index)
-              onActionClicked: root.addApp(appWrap.modelData.proc)
+              onActionClicked: root.addApp(appWrap.modelData.proc, appWrap.modelData.title)
             }
 
             Throttle.AddRow {
@@ -610,7 +611,8 @@ Panel {
             Throttle.TrafficRow {
               id: trafficRow
               width: parent.width
-              name: trafficWrap.modelData.name || ""
+              // Unconfigured programs: full executable name, not the 15-char comm.
+              name: (trafficWrap.modelData.key ? trafficWrap.modelData.name : (trafficWrap.modelData.full || trafficWrap.modelData.name)) || ""
               down: trafficWrap.modelData.down || 0
               up: trafficWrap.modelData.up || 0
               conns: trafficWrap.modelData.conns || 0

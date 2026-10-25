@@ -68,6 +68,14 @@ for (const n of ["a1", "a2", "a3", "a4", "a5"]) full = M.merged(full, M.addPatch
 eq("max apps", [M.appList(full).length, M.canAdd(full), M.addPatch(full, "a6")], [8, false, null])
 eq("full list shows note instead of add rows", M.appRows(full, status, traffic).slice(-1)[0].kind, "note")
 
+const tg = M.addPatch(cfg, "telegram-deskto", "telegram-desktop")
+eq("long name: matched by 15-char comm, full label/key", [Object.keys(tg.apps)[0], tg.apps["telegram-deskto"] ? "" : Object.values(tg.apps)[0].label, Object.values(tg.apps)[0].procs],
+  ["telegram-deskt", "Telegram-desktop", ["telegram-deskto"]])
+eq("typed long name is cut to the comm", M.addPatch(cfg, "telegram-desktop").apps["telegram-deskt"].procs, ["telegram-deskto"])
+eq("validName", [M.validName("telegram-desktop"), M.validName("x".repeat(33)), M.validName("bash"), M.validName("a/b")], [true, false, false, false])
+eq("candidate carries full name", M.appRows(cfg, status, { apps: [{ name: "telegram-deskto", key: "", proc: "telegram-deskto", full: "telegram-desktop", own: true, down: 1, up: 1, conns: 1 }] })
+  .filter(r => r.kind === "candidate").map(r => [r.proc, r.title]), [["telegram-deskto", "telegram-desktop"]])
+
 // ---- stats ----
 eq("formatBytes", [M.formatBytes(0), M.formatBytes(2048), M.formatBytes(5 * 1048576), M.formatBytes(3 * 1073741824)], ["0 B", "2 KiB", "5.0 MiB", "3.00 GiB"])
 eq("shiftDate across months", [M.shiftDate("2026-03-01", -1), M.shiftDate("2026-12-31", 1)], ["2026-02-28", "2027-01-01"])

@@ -16,6 +16,7 @@ CursorSurface {
   // Stats rows show byte totals instead of rates.
   property bool bytes: false
   property bool muted: false
+  property bool showBar: true
   // Optional chip on the right ("Add" for candidate apps).
   property string actionText: ""
   property string actionTooltip: ""
@@ -46,22 +47,51 @@ CursorSurface {
     anchors.bottom: parent.bottom
     radius: Style.cornerRadius
     width: parent.width * Math.min(1, (root.down + root.up) / Math.max(1, root.peak))
+    // A few-pixel sliver reads as a stray edge line, not as a share.
+    visible: root.showBar && width >= Math.max(radius * 2, Style.space(12))
     color: Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.14)
     Behavior on width { NumberAnimation { duration: 250 } }
   }
 
-  Text {
+  // Name keeps priority: the "limited · N conns" suffix is small and drops
+  // out first; a name that still doesn't fit ends in "…".
+  Item {
+    id: nameBox
     anchors.left: parent.left
     anchors.leftMargin: root.edgeMargin
     anchors.right: rates.left
     anchors.rightMargin: root.edgeMargin
     anchors.verticalCenter: parent.verticalCenter
-    elide: Text.ElideRight
-    textFormat: Text.PlainText
-    text: root.name + (root.limited ? "  ·  limited" : "") + (root.conns > 1 ? "  ·  " + root.conns + " conns" : "")
-    color: root.muted ? Qt.darker(root.contentForeground, 1.5) : root.contentForeground
-    font.family: root.contentFontFamily
-    font.pixelSize: Style.font.body
+    height: nameText.implicitHeight
+
+    readonly property string suffix: (root.limited ? "limited" : "")
+      + (root.limited && root.conns > 1 ? " · " : "") + (root.conns > 1 ? root.conns + " conns" : "")
+    readonly property bool suffixFits: suffix !== "" && nameText.implicitWidth + suffixText.implicitWidth + Style.space(10) <= width
+
+    Text {
+      id: nameText
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      width: Math.min(implicitWidth, parent.width)
+      elide: Text.ElideRight
+      textFormat: Text.PlainText
+      text: root.name
+      color: root.muted ? Qt.darker(root.contentForeground, 1.5) : root.contentForeground
+      font.family: root.contentFontFamily
+      font.pixelSize: Style.font.body
+    }
+    Text {
+      id: suffixText
+      visible: nameBox.suffixFits
+      anchors.left: nameText.right
+      anchors.leftMargin: Style.space(10)
+      anchors.baseline: nameText.baseline
+      textFormat: Text.PlainText
+      text: nameBox.suffix
+      color: Qt.darker(root.contentForeground, 1.5)
+      font.family: root.contentFontFamily
+      font.pixelSize: Style.font.caption
+    }
   }
 
   Row {
