@@ -81,15 +81,18 @@ BarWidget {
     tooltipText: root.store ? Model.tooltipText(root.cfg, root.store.status, root.store.traffic, root.limiting, root.cfg.units) : "Throttle"
     onPressed: function(b) { root.press(b) }
 
-    // "dot" mode: a cap is maxed out right now.
+    // "dot" mode: a cap is maxed out right now. A small badge just outside
+    // the glyph's top-right corner (same on horizontal and vertical bars).
     Rectangle {
+      id: badge
+      readonly property real glyphHalf: Math.max(button.glyphPaintedWidth, Style.bar.iconCanvas * 0.75) / 2
       visible: root.mode === "dot" && root.biting && !root.paused
-      width: Style.space(6)
+      width: Math.max(4, Math.round(Style.bar.iconCanvas * 0.32))
       height: width
       radius: width / 2
       color: Commons.Color.urgent
-      x: parent.width / 2 + Style.space(5)
-      y: parent.height / 2 - Style.space(9)
+      x: Math.min(parent.width - width, Math.round(parent.width / 2 + glyphHalf - 1))
+      y: Math.max(0, Math.round(parent.height / 2 - Style.bar.iconCanvas / 2 - height / 2 + 1))
     }
   }
 

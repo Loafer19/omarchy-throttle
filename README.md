@@ -52,7 +52,7 @@ while paused and red on an error; its tooltip lists every cap with its live
 rate. Settings › Bar widget adds a red **dot** while a cap is maxed out (≥ 90 %)
 or the live download **rate** next to the icon (horizontal bars).
 
-![Bar widget states: icon limiting, idle, dot, rate, paused, error](preview-bar.png)
+![Bar widget states: icon limiting, idle, dot, rate, paused, error, vertical bar](preview-bar.png)
 
 Limits persist and re-apply at login and whenever a limited app restarts.
 
