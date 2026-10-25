@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+# yoyo.throttle root helper — the ONLY thing the plugin runs as root.
+#
+# Installed root-owned at /usr/local/lib/yoyo-throttle/throttle-helper and
+# allowed via /etc/sudoers.d/yoyo-throttle (NOPASSWD, this path only).
+# Every argument is validated against a strict pattern; nothing from the
+# caller is ever passed to a shell, eval'd, or used as a path outside
+# /sys/fs/cgroup/user.slice/user-<caller uid>.slice/.
+#
+#   throttle-helper [--dry-run] apply --iface IF --down KBIT --up KBIT \
+#                   [--app NAME:DOWN:UP:MODE:BULKMIB:CGPATH[,CGPATH...]]...
+#   throttle-helper [--dry-run] clear
+#   throttle-helper version
+#
+# KBIT is 0 (no cap) or 64..10000000. MODE is "all" or "bulk" (only TCP
+# flows that already moved more than BULKMIB MiB — keeps game traffic,
+# which is UDP or small TCP, out of the app's slow lane).
+
+set -euo pipefail
+set -f            # no globbing anywhere: caller strings are split, never expanded
+umask 022
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export LC_ALL=C
+
+readonly VERSION=1
+readonly IFB=ifb-throttle
+readonly TABLE=yoyo_throttle
+readonly MARK_MASK=0x0f000000
+readonly KEEP_MASK=0xf0ffffff
+readonly LINE_KBIT=10000000          # "no global cap" ceiling: 10 Gbit/s
+readonly MAX_APPS=8
+# Test-only overrides; ignored whenever we were started through sudo.
+if [[ -z ${SUDO_UID:-} && ${THROTTLE_TEST:-} == 1 ]]; then
+  readonly CG_ROOT=${THROTTLE_CGROUP_ROOT:-/sys/fs/cgroup}
+  readonly STATE_DIR=${THROTTLE_STATE_DIR:-/run/yoyo-throttle}
+  readonly TEST_UID=${THROTTLE_TEST_UID:-}
+else
+  readonly CG_ROOT=/sys/fs/cgroup STATE_DIR=/run/yoyo-throttle TEST_UID=""
+fi
+readonly ACCT=/proc/sys/net/netfilter/nf_conntrack_acct
+
+dry=0
+die() { printf 'throttle-helper: %s\n' "$*" >&2; exit 2; }
+warn() { printf 'throttle-helper: %s\n' "$*" >&2; }
+
+run() {
+  if (( dry )); then printf '%s\n' "$*"; else "$@"; fi
+}
+# Same as run but never fatal (used for teardown of things that may not exist).
+try() {
+  if (( dry )); then printf '%s\n' "$*"; else "$@" 2>/dev/null || true; fi
+}
+
+valid_kbit() {
+  [[ $1 =~ ^(0|[1-9][0-9]{1,7})$ ]] || return 1
+  (( $1 == 0 || ($1 >= 64 && $1 <= LINE_KBIT) ))
+}
+
+valid_iface() {
+  [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$ ]] || return 1
+  [[ $1 != "$IFB" && $1 != lo ]] || return 1
+  (( dry )) || link_exists "$1"
+}
+
+link_exists() { ip -o link show dev "$1" >/dev/null 2>&1; }
+
+caller_uid() {
+  if [[ -n ${SUDO_UID:-} ]]; then printf '%s' "$SUDO_UID"
+  elif [[ -n $TEST_UID ]]; then printf '%s' "$TEST_UID"
+  else id -u; fi
+}
+
+# Cgroup paths must sit inside the calling user's own systemd tree.
+valid_cgpath() {
+  local p=$1 uid
+  uid=$(caller_uid)
+  [[ $uid =~ ^[0-9]+$ ]] || return 1
+  [[ ${#p} -le 400 ]] || return 1
+  [[ $p == "user.slice/user-$uid.slice/user@$uid.service/"* ]] || return 1
+  [[ $p =~ ^[A-Za-z0-9@:._/\\-]+$ ]] || return 1
+  [[ $p != *..* && $p != *//* && $p != */ ]] || return 1
+  return 0
+}
+
+state_set() { (( dry )) || { mkdir -p "$STATE_DIR"; printf '%s\n' "$2" > "$STATE_DIR/$1"; }; }
+state_get() { [[ -f $STATE_DIR/$1 ]] && cat "$STATE_DIR/$1" || true; }
+
+ours_root_qdisc() {
+  # Only tear down a root htb we installed ourselves.
+  [[ $(state_get iface) == "$1" ]] && tc qdisc show dev "$1" root 2>/dev/null | grep -q '^qdisc htb 1: '
+}
+
+teardown() {
+  local old
+  old=$(state_get iface)
+  try nft delete table inet "$TABLE"
+  if [[ -n $old ]] && link_exists "$old"; then
+    if (( dry )) || ours_root_qdisc "$old"; then try tc qdisc del dev "$old" root; fi
+    try tc qdisc del dev "$old" ingress
+  fi
+  try ip link del "$IFB"
+  if [[ -f $STATE_DIR/acct.prev ]]; then
+    local prev; prev=$(state_get acct.prev)
+    [[ $prev =~ ^[01]$ ]] && { (( dry )) && echo "echo $prev > $ACCT" || echo "$prev" > "$ACCT"; }
+    (( dry )) || rm -f "$STATE_DIR/acct.prev"
+  fi
+  (( dry )) || rm -f "$STATE_DIR/iface"
+}
+
+# --- htb builder -----------------------------------------------------------
+# build_tree DEV TOTAL_KBIT DIR  (DIR = down|up, picks the app cap column)
+build_tree() {
+  local dev=$1 total=$2 dir=$3 i cap rate sum=0 def
+  local parent=$total
+  (( parent == 0 )) && parent=$LINE_KBIT
+
+  run tc qdisc replace dev "$dev" root handle 1: htb default 99 r2q 100
+  run tc class add dev "$dev" parent 1: classid 1:1 htb rate "${parent}kbit" ceil "${parent}kbit" quantum 30000
+
+  for (( i = 0; i < ${#app_names[@]}; i++ )); do
+    [[ $dir == down ]] && cap=${app_down[i]} || cap=${app_up[i]}
+    (( cap > 0 )) || continue
+    (( cap > parent )) && cap=$parent
+    rate=$(( cap / 10 )); (( rate < 8 )) && rate=8
+    sum=$(( sum + rate ))
+    local cls=$(( 0x10 + i + 1 )) mark
+    printf -v cls '%x' "$cls"
+    printf -v mark '0x%08x' $(( (i + 1) << 24 ))
+    run tc class add dev "$dev" parent 1:1 classid "1:$cls" htb rate "${rate}kbit" ceil "${cap}kbit" prio 7 quantum 3000
+    run tc qdisc add dev "$dev" parent "1:$cls" handle "$cls:" fq_codel
+    run tc filter add dev "$dev" parent 1: protocol all prio 1 handle "$mark/$MARK_MASK" fw classid "1:$cls"
+  done
+
+  def=$(( parent - sum )); (( def < parent / 2 )) && def=$(( parent / 2 ))
+  run tc class add dev "$dev" parent 1:1 classid 1:99 htb rate "${def}kbit" ceil "${parent}kbit" prio 0 quantum 30000
+  run tc qdisc add dev "$dev" parent 1:99 handle 99: fq_codel
+}
+
+nft_ruleset() {
+  local i p level mark rules="" n=0
+  for (( i = 0; i < ${#app_names[@]}; i++ )); do
+    (( app_down[i] > 0 || app_up[i] > 0 )) || continue
+    printf -v mark '0x%08x' $(( (i + 1) << 24 ))
+    local match=""
+    [[ ${app_mode[i]} == bulk ]] && match="meta l4proto tcp ct bytes > $(( app_bulk[i] * 1048576 )) "
+    local IFS=,
+    for p in ${app_cg[i]}; do
+      [[ -n $p ]] || continue
+      if (( ! dry )) && [[ ! -d $CG_ROOT/$p ]]; then warn "skip ${app_names[i]}: cgroup gone: $p"; continue; fi
+      level=$(awk -F/ '{print NF}' <<<"$p")
+      rules+="    socket cgroupv2 level $level \"$p\" ${match}ct mark and $MARK_MASK == 0 ct mark set ct mark and $KEEP_MASK or $mark comment \"${app_names[i]}\""$'\n'
+      n=$(( n + 1 ))
+    done
+    unset IFS
+    rules+="    ct mark and $MARK_MASK == $mark meta mark set meta mark and $KEEP_MASK or $mark"$'\n'
+  done
+  printf 'table inet %s {}\ndelete table inet %s\n' "$TABLE" "$TABLE"
+  printf 'table inet %s {\n  chain out {\n    type filter hook output priority mangle + 10; policy accept;\n%s  }\n}\n' "$TABLE" "$rules"
+}
+
+cmd_apply() {
+  local iface="" down="" up="" spec
+  app_names=(); app_down=(); app_up=(); app_mode=(); app_bulk=(); app_cg=()
+  while (( $# )); do
+    case $1 in
+      --iface) iface=${2:-}; shift 2 ;;
+      --down) down=${2:-}; shift 2 ;;
+      --up) up=${2:-}; shift 2 ;;
+      --app)
+        spec=${2:-}; shift 2
+        (( ${#app_names[@]} < MAX_APPS )) || die "too many apps"
+        local IFS=:
+        # shellcheck disable=SC2206
+        local f=($spec)
+        unset IFS
+        (( ${#f[@]} == 5 || ${#f[@]} == 6 )) || die "bad --app spec"
+        [[ ${f[0]} =~ ^[a-z][a-z0-9-]{0,15}$ ]] || die "bad app name"
+        valid_kbit "${f[1]}" || die "bad app down kbit"
+        valid_kbit "${f[2]}" || die "bad app up kbit"
+        [[ ${f[3]} == all || ${f[3]} == bulk ]] || die "bad app mode"
+        [[ ${f[4]} =~ ^[1-9][0-9]{0,3}$ ]] && (( f[4] <= 1024 )) || die "bad bulk MiB"
+        local cg=${f[5]:-} p
+        local IFS=,
+        for p in $cg; do valid_cgpath "$p" || die "bad cgroup path: $p"; done
+        unset IFS
+        app_names+=("${f[0]}"); app_down+=("${f[1]}"); app_up+=("${f[2]}")
+        app_mode+=("${f[3]}"); app_bulk+=("${f[4]}"); app_cg+=("$cg")
+        ;;
+      *) die "unknown argument: $1" ;;
+    esac
+  done
+  valid_iface "$iface" || die "bad interface"
+  valid_kbit "$down" || die "bad down kbit"
+  valid_kbit "$up" || die "bad up kbit"
+
+  local i any_down=$(( down > 0 )) any_up=$(( up > 0 )) any_bulk=0 any_app=0
+  for (( i = 0; i < ${#app_names[@]}; i++ )); do
+    (( app_down[i] > 0 )) && any_down=1
+    (( app_up[i] > 0 )) && any_up=1
+    (( app_down[i] > 0 || app_up[i] > 0 )) && any_app=1
+    [[ ${app_mode[i]} == bulk ]] && (( app_down[i] > 0 || app_up[i] > 0 )) && any_bulk=1
+  done
+
+  teardown
+  (( any_down || any_up )) || { echo "cleared"; return 0; }
+
+  if (( any_bulk )) && [[ -w $ACCT || $dry == 1 ]]; then
+    local cur; cur=$(cat "$ACCT" 2>/dev/null || echo 0)
+    if [[ $cur != 1 ]]; then
+      state_set acct.prev "$cur"
+      if (( dry )); then echo "echo 1 > $ACCT"; else echo 1 > "$ACCT"; fi
+    fi
+  fi
+
+  if (( any_app )); then
+    if (( dry )); then nft_ruleset; else nft_ruleset | nft -f -; fi
+  fi
+
+  state_set iface "$iface"
+  if (( any_up )); then build_tree "$iface" "$up" up; fi
+  if (( any_down )); then
+    run ip link add "$IFB" type ifb
+    run ip link set "$IFB" up
+    run tc qdisc replace dev "$iface" handle ffff: ingress
+    run tc filter add dev "$iface" parent ffff: protocol all prio 10 matchall \
+      action ctinfo cpmark "$MARK_MASK" action mirred egress redirect dev "$IFB"
+    build_tree "$IFB" "$down" down
+  fi
+  echo "applied"
+}
+
+main() {
+  [[ ${1:-} == --dry-run ]] && { dry=1; shift; }
+  local cmd=${1:-}; shift || true
+  case $cmd in
+    version) echo "$VERSION"; return 0 ;;
+    apply|clear) ;;
+    *) die "usage: throttle-helper [--dry-run] apply|clear|version" ;;
+  esac
+  (( dry )) || [[ $(id -u) == 0 ]] || die "must run as root (via sudo)"
+  # One writer at a time.
+  if (( ! dry )); then
+    mkdir -p "$STATE_DIR"
+    exec 9>"$STATE_DIR/lock"
+    flock -w 10 9 || die "busy"
+  fi
+  case $cmd in
+    apply) cmd_apply "$@" ;;
+    clear) (( $# == 0 )) || die "clear takes no arguments"; teardown; echo "cleared" ;;
+  esac
+}
+
+main "$@"
