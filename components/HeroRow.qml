@@ -33,12 +33,7 @@ CursorSurface {
   Timer { id: disarm; interval: 3000; onTriggered: root.armed = false }
   onHasCursorChanged: if (!hasCursor) armed = false
 
-  MouseArea {
-    anchors.fill: parent
-    hoverEnabled: true
-    acceptedButtons: Qt.NoButton
-    onContainsMouseChanged: if (containsMouse && root.removable) root.rowHovered()
-  }
+  RowHover { onHovered: if (root.removable) root.rowHovered() }
 
   StateDot {
     id: dot

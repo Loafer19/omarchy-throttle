@@ -21,12 +21,7 @@ CursorSurface {
   fill: Theme.hoverFill
   bordered: false
 
-  MouseArea {
-    anchors.fill: parent
-    hoverEnabled: true
-    acceptedButtons: Qt.NoButton
-    onContainsMouseChanged: if (containsMouse) root.rowHovered()
-  }
+  RowHover { onHovered: root.rowHovered() }
 
   Column {
     anchors.left: parent.left

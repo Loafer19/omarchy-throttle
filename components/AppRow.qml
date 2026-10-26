@@ -24,11 +24,9 @@ CursorSurface {
   fill: Theme.hoverFill
   bordered: false
 
-  MouseArea {
-    anchors.fill: parent
-    hoverEnabled: true
-    cursorShape: Qt.PointingHandCursor
-    onContainsMouseChanged: if (containsMouse) root.rowHovered()
+  RowHover {
+    clickable: true
+    onHovered: root.rowHovered()
     onClicked: root.rowClicked()
   }
 

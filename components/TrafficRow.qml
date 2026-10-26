@@ -34,10 +34,10 @@ CursorSurface {
   fill: Theme.hoverFill
   bordered: false
 
-  MouseArea {
-    anchors.fill: parent
-    hoverEnabled: true
-    onContainsMouseChanged: if (containsMouse) root.rowHovered()
+  RowHover {
+    clickable: true
+    pointer: false
+    onHovered: root.rowHovered()
     onClicked: root.rowClicked()
   }
 
