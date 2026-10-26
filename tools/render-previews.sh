@@ -32,7 +32,7 @@ render() { # render FILE ENTRY [VAR=VALUE ...]
   local name=$1 file=$out/$1 entry=$cfg/$2 log=$tmp/${1//\//_}.log
   shift 2
   env "$@" PREVIEW_OUT="$file" QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
-    QT_SCALE_FACTOR=${PREVIEW_SCALE:-2} timeout 40 qs -p "$entry" > "$log" 2>&1 || true
+    QT_SCALE_FACTOR="${PREVIEW_SCALE:-2}" timeout 40 qs -p "$entry" > "$log" 2>&1 || true
   if grep -q '^.*saved ' "$log" && [[ -s $file ]]; then
     echo "saved $file"
   else
