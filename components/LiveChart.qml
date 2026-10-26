@@ -33,23 +33,15 @@ Item {
     width: parent.width - Theme.edge * 2
     height: root.plotHeight
 
-    // Grid: four bands, labelled at the top-left of each line.
+    // Grid: four bands; the labels are drawn after the canvas (below).
     Repeater {
       model: 4
-      Item {
+      Rectangle {
         required property int index
-        readonly property real frac: (index + 1) / 4
-        y: plot.height * (1 - frac)
+        y: plot.height * (1 - (index + 1) / 4)
         width: plot.width
-        Rectangle { width: parent.width; height: Style.spacing.hairline; color: Theme.line }
-        Text {
-          visible: index % 2 === 1
-          y: Style.space(2)
-          text: Format.formatRate(root.series.max * parent.frac, root.units).replace(".0 ", " ")
-          color: Theme.faint
-          font.family: Theme.fontFamily
-          font.pixelSize: Theme.caption
-        }
+        height: Style.spacing.hairline
+        color: Theme.line
       }
     }
     Rectangle { y: plot.height - height; width: plot.width; height: Style.spacing.hairline; color: Theme.tint(Theme.fg, 0.24) }
@@ -87,6 +79,29 @@ Item {
         ctx.strokeStyle = root.css(Theme.fg, 0.55)
         ctx.lineWidth = 1
         ctx.stroke()
+      }
+    }
+
+    // Labels at the top-left of every other gridline, on a backdrop so a
+    // full history (which paints over the lower lines) doesn't hide them.
+    Repeater {
+      model: [0.5, 1]
+      Rectangle {
+        id: gridLabel
+        required property real modelData
+        y: plot.height * (1 - modelData) + Style.space(2)
+        width: labelText.implicitWidth + Style.space(8)
+        height: labelText.implicitHeight + Style.space(2)
+        radius: Style.cornerRadius
+        color: Theme.tint(Theme.background, 0.72)
+        Text {
+          id: labelText
+          anchors.centerIn: parent
+          text: Format.formatRate(root.series.max * gridLabel.modelData, root.units).replace(".0 ", " ")
+          color: Theme.dim
+          font.family: Theme.fontFamily
+          font.pixelSize: Theme.caption
+        }
       }
     }
 
