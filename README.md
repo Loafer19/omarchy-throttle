@@ -58,9 +58,15 @@ Limits persist and re-apply at login and whenever a limited app restarts.
 
 ## Requirements
 
-Omarchy + `nftables` and `iproute2`. Shaping needs root once: `install.sh`
-puts a root-owned copy of `helper/throttle-helper` (strict argument checks) in
-`/usr/local/lib/yoyo-throttle/` and a `sudoers.d` rule for that file only.
+- Omarchy (Quickshell bar) with the plugin system — tested on Omarchy 4.0.
+- `nftables` (`nft`) and `iproute2` (`tc`, `ip`, `ss`), `jq`, `sudo`,
+  `wl-clipboard` (the Copy chips). All are on a stock Omarchy install.
+- Kernel support for `ifb`, `htb` and nftables `socket cgroupv2` matching
+  (stock Arch kernels have it) and the unified cgroup v2 hierarchy.
+- Shaping needs root once: `install.sh` puts a root-owned copy of
+  `helper/throttle-helper` (strict argument checks) in
+  `/usr/local/lib/yoyo-throttle/` and a `sudoers.d` rule for that file only.
+  Traffic and history need no root at all.
 
 ## Install
 
@@ -89,6 +95,54 @@ so) rather than capping your shell. Shells, `sudo`, Hyprland, PipeWire and
 other session processes can't be added. Per-app Traffic rows count TCP only;
 UDP is in the total and in Other.
 
+## How it works
+
+- **Who runs what.** `Service.qml` (always loaded) calls
+  `scripts/backend.sh` as you. The backend finds each app's processes, maps
+  them to their systemd `--user` cgroups and builds a plan; the only
+  privileged step is `sudo -n /usr/local/lib/yoyo-throttle/throttle-helper
+  apply|clear`, which validates every argument and only touches paths under
+  your own `user-<uid>.slice`.
+- **Shaping.** Upload: an `htb` tree on the default-route interface.
+  Download: ingress is redirected to an `ifb-throttle` device with its own
+  `htb` tree. An `nft` table (`yoyo_throttle`) marks packets by cgroup
+  (`socket cgroupv2`), and each app's mark lands in its own `htb` class, so
+  an app's cap never slows anything else down. Games-safe adds a conntrack
+  byte check: only TCP flows that already moved more than N MiB get the mark.
+- **When it re-applies.** `backend.sh tick` runs every 5 s and right after a
+  settings change; it calls the helper only when the plan's fingerprint
+  changed (new cgroup after an app restart, Wi-Fi ↔ Ethernet, new caps), or
+  when the shaping vanished (suspend, reboot, someone ran `tc qdisc del`).
+- **Traffic.** `backend.sh traffic` diffs `ss -tinpe` byte counters per
+  process between calls (`scripts/lib/ss-deltas.awk`); the interface total
+  comes from `/sys/class/net/<iface>/statistics`. `stats-sample` adds the
+  same deltas to today's totals (`scripts/lib/stats-add.jq`), kept in
+  `$XDG_RUNTIME_DIR` and written to `~/.local/state/omarchy/yoyo.throttle/`
+  every 5 min and at logout.
+- **Settings** live in `~/.local/state/omarchy/yoyo.throttle/settings.json`,
+  normalized against `defaults.js` by `scripts/lib/normalize.jq`.
+
+## Troubleshooting
+
+- **"One-time setup" card won't go away** — the helper isn't at
+  `/usr/local/lib/yoyo-throttle/throttle-helper`. Run the command from the
+  card; it must be run with `sudo` from your normal user.
+- **Red status line / red speedometer** — the helper refused or failed;
+  the message is the helper's own. `bash scripts/backend.sh plan` prints
+  exactly what would be passed to it, `bash scripts/backend.sh tick --force`
+  re-applies and prints the status JSON.
+- **"Can't limit: started outside an app scope"** — the app runs in a
+  shared cgroup (started from a terminal, or a system service). Start it
+  from the app launcher, or wrap it: `systemd-run --user --scope -- APP`.
+- **A cap is set but the app isn't slowed** — it isn't running yet
+  (Limits › Apps says "Not running"), or the traffic is UDP / goes through
+  another process (Traffic › Live shows which process actually talks).
+- **After updating the plugin** — if `helper/throttle-helper` changed (see
+  the release notes), run `sudo bash scripts/install.sh` again: the
+  installed copy is never updated automatically.
+- **Remove all shaping right now** — press **p** (pause), or
+  `bash scripts/backend.sh clear`.
+
 ## Uninstall
 
 ```bash
@@ -98,6 +152,32 @@ rm -rf ~/.local/state/omarchy/yoyo.throttle
 ```
 
 ## Development
+
+```
+Service.qml        backend calls, settings / status / traffic state (BackendCall each)
+BarWidget.qml      the speedometer, tooltip, dot / rate
+Panel.qml          tabs, keyboard cursor, the one ListView
+components/        one file per row kind (RowDelegate picks by row.kind) + header parts
+model/*.js         pure logic, no QML: format, rates, apps, views, settings, status,
+                   live, stats, nav (keyboard cursor + key hints)
+defaults.js        built-in apps and defaults, shared by model/ and the backend
+scripts/backend.sh unprivileged backend; jq / awk programs in scripts/lib/
+helper/            the root helper (installed copy, see install.sh)
+```
+
+Tests (none of them need root or touch real network settings):
+
+```bash
+node tests/model.test.js   # model/*.js, loaded with the same .import graph as QML
+bash tests/unit.sh         # backend, scripts/lib, helper --dry-run, install --prefix,
+                           # vendor check, shellcheck (when installed)
+bash tests/netns-e2e.sh    # real shaping inside user + net namespaces (slow)
+bash tools/lint-qml.sh     # qmllint over the plugin's QML: no warnings expected
+```
+
+Keep logic in `model/*.js` with a test next to the others and the QML
+declarative. QML imports the module it needs (`import "model/apps.js" as
+Apps`), not a facade, so qmllint can check every call.
 
 The theme, chips, action rows, empty states and key hints come from
 [omarchy-yoyo-ui](https://github.com/Loafer19/omarchy-yoyo-ui), vendored in
