@@ -6,6 +6,7 @@ import "model/format.js" as Format
 import "model/apps.js" as Apps
 import "model/live.js" as Live
 import "model/status.js" as Status
+import "components" as Throttle
 
 // Always loaded (keepLoaded): re-applies limits at login, when the network
 // interface changes, and when a limited app starts or restarts (its cgroup is
@@ -41,12 +42,10 @@ Item {
   property bool statsWanted: false
 
   readonly property bool limiting: Status.isLimiting(status, cfg)
-  readonly property string script:
-    Qt.resolvedUrl("scripts/backend.sh").toString().replace(/^file:\/\//, "")
-  readonly property string installScript:
-    Qt.resolvedUrl("scripts/install.sh").toString().replace(/^file:\/\//, "")
-  readonly property string uninstallScript:
-    Qt.resolvedUrl("scripts/uninstall.sh").toString().replace(/^file:\/\//, "")
+  function localPath(rel) { return Qt.resolvedUrl(rel).toString().replace(/^file:\/\//, "") }
+  readonly property string script: localPath("scripts/backend.sh")
+  readonly property string installScript: localPath("scripts/install.sh")
+  readonly property string uninstallScript: localPath("scripts/uninstall.sh")
   function shellQuote(p) { return /^[A-Za-z0-9_.\/@+-]+$/.test(p) ? p : "'" + p.replace(/'/g, "'\\''") + "'" }
   readonly property string installCommand: "sudo bash " + shellQuote(installScript)
   readonly property string uninstallCommand: "sudo bash " + shellQuote(uninstallScript)
@@ -70,8 +69,7 @@ Item {
     // keepNulls: { apps: { key: null } } is how an app gets removed.
     for (var i = 0; i < pendingPatches.length; i++) merged = Apps.merged(merged, pendingPatches[i], true)
     pendingPatches = []
-    setProc.command = root.backend(["settings-set", JSON.stringify(merged)])
-    setProc.running = true
+    setProc.run(["settings-set", JSON.stringify(merged)])
   }
 
   function setEnabled(on) { root.setPatch({ enabled: on === true }) }
@@ -88,27 +86,14 @@ Item {
     if (p) root.setPatch(p)
   }
 
-  function sampleStats() {
-    if (statsProc.running) return
-    statsProc.command = root.backend(root.statsWanted ? ["stats-sample", "--print"] : ["stats-sample"])
-    statsProc.running = true
-  }
+  function sampleStats() { statsProc.run(root.statsWanted ? ["stats-sample", "--print"] : ["stats-sample"]) }
   onStatsWantedChanged: if (statsWanted) sampleStats()
 
   function tick(force) {
-    if (tickProc.running) {
-      if (force) tickAgain.restart()
-      return
-    }
-    tickProc.command = root.backend(force ? ["tick", "--force"] : ["tick"])
-    tickProc.running = true
+    if (!tickProc.run(force ? ["tick", "--force"] : ["tick"]) && force) tickAgain.restart()
   }
 
-  function sampleTraffic() {
-    if (trafficProc.running) return
-    trafficProc.command = root.backend(["traffic"])
-    trafficProc.running = true
-  }
+  function sampleTraffic() { trafficProc.run(["traffic"]) }
 
   function copyInstallCommand() {
     Quickshell.execDetached(["wl-copy", root.installCommand])
@@ -118,41 +103,30 @@ Item {
   }
 
   // Settings › Clear history.
-  function resetStats() {
-    if (resetProc.running) return
-    resetProc.command = root.backend(["stats-reset"])
-    resetProc.running = true
-  }
+  function resetStats() { resetProc.run(["stats-reset"]) }
 
-  Process {
+  Throttle.BackendCall {
     id: getProc
-    command: root.backend(["settings-get"])
-    stdout: StdioCollector {
-      onStreamFinished: {
-        try {
-          var data = JSON.parse(text)
-          if (data && typeof data === "object") {
-            root.cfg = data
-            root.loaded = true
-            root.settingsChanged()
-          }
-        } catch (e) {}
-        root.tick(false)
+    script: root.script
+    onReceived: {
+      const data = getProc.data
+      if (data) {
+        root.cfg = data
+        root.loaded = true
+        root.settingsChanged()
       }
+      root.tick(false)
     }
   }
 
-  Process {
+  Throttle.BackendCall {
     id: setProc
-    stdout: StdioCollector {
-      onStreamFinished: {
-        try {
-          var data = JSON.parse(text)
-          if (data && typeof data === "object" && !data.error && root.pendingPatches.length === 0) {
-            root.cfg = data
-            root.settingsChanged()
-          }
-        } catch (e) {}
+    script: root.script
+    onReceived: {
+      const data = setProc.data
+      if (data && !data.error && root.pendingPatches.length === 0) {
+        root.cfg = data
+        root.settingsChanged()
       }
     }
     onExited: {
@@ -161,52 +135,37 @@ Item {
     }
   }
 
-  Process {
+  Throttle.BackendCall {
     id: tickProc
-    stdout: StdioCollector {
-      onStreamFinished: {
-        try {
-          var data = JSON.parse(text)
-          if (data && typeof data === "object") root.status = data
-        } catch (e) {}
-      }
-    }
+    script: root.script
+    onReceived: if (tickProc.data) root.status = tickProc.data
   }
 
-  Process {
+  Throttle.BackendCall {
     id: trafficProc
-    stdout: StdioCollector {
-      onStreamFinished: {
-        try {
-          var data = JSON.parse(text)
-          if (data && Array.isArray(data.apps)) {
-            root.traffic = data
-            root.history = Live.pushSample(root.history, data, Date.now(), Live.LIVE_SAMPLES)
-          }
-        } catch (e) {}
+    script: root.script
+    onReceived: {
+      const data = trafficProc.data
+      if (data && Array.isArray(data.apps)) {
+        root.traffic = data
+        root.history = Live.pushSample(root.history, data, Date.now(), Live.LIVE_SAMPLES)
       }
     }
   }
 
-  Process {
+  Throttle.BackendCall {
     id: resetProc
+    script: root.script
     onExited: {
       root.stats = null
       root.sampleStats()
     }
   }
 
-  Process {
+  Throttle.BackendCall {
     id: statsProc
-    stdout: StdioCollector {
-      onStreamFinished: {
-        if (!root.statsWanted) return
-        try {
-          var data = JSON.parse(text)
-          if (data && Array.isArray(data.days)) root.stats = data
-        } catch (e) {}
-      }
-    }
+    script: root.script
+    onReceived: if (root.statsWanted && statsProc.data && Array.isArray(statsProc.data.days)) root.stats = statsProc.data
   }
 
   // Settings changes apply quickly; the 5 s poll catches app (re)starts,
@@ -234,7 +193,7 @@ Item {
     onTriggered: root.sampleStats()
   }
 
-  Component.onCompleted: getProc.running = true
+  Component.onCompleted: getProc.run(["settings-get"])
   // Shell reload / logout: write the in-memory (tmpfs) day totals to disk.
   Component.onDestruction: Quickshell.execDetached(root.backend(["stats-sample", "--sync"]))
 }
