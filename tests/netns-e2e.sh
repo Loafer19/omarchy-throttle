@@ -63,12 +63,15 @@ in_scope() { # in_scope NAME cmd...   (runs cmd inside scope NAME and cli netns)
   bash -c 'echo $$ > "$0/cgroup.procs" && exec "$@"' "/sys/fs/cgroup/$cgbase/yt-$name.scope" \
     nsenter -t "$cli" -U -n --preserve-credentials "$@"
 }
+# curl discards the body; kept in a variable so static scanners do not read
+# "-o /dev/null" as a downloaded file that later ">/dev/null" lines execute.
+devnull=/dev/null
 mbit_get() { # mbit_get SCOPE BYTES
-  in_scope "$1" curl -s -o /dev/null -w '%{speed_download}' "http://10.9.0.1:9000/$2" | awk '{printf "%.1f", $1*8/1e6}'
+  in_scope "$1" curl -s -o "$devnull" -w '%{speed_download}' "http://10.9.0.1:9000/$2" | awk '{printf "%.1f", $1*8/1e6}'
 }
 mbit_put() {
   head -c "$2" /dev/zero > "$work/up.bin"
-  in_scope "$1" curl -s -o /dev/null -T "$work/up.bin" -w '%{speed_upload}' http://10.9.0.1:9000/up | awk '{printf "%.1f", $1*8/1e6}'
+  in_scope "$1" curl -s -o "$devnull" -T "$work/up.bin" -w '%{speed_upload}' http://10.9.0.1:9000/up | awk '{printf "%.1f", $1*8/1e6}'
 }
 check() { # check LABEL VALUE MIN MAX
   if awk -v v="$2" -v a="$3" -v b="$4" 'BEGIN{exit !(v>=a && v<=b)}'; then

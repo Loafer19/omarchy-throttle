@@ -112,16 +112,16 @@ teardown() {
 build_tree() {
   local dev=$1 total=$2 dir=$3 i cap rate sum=0 def
   local parent=$total
-  (( parent == 0 )) && parent=$LINE_KBIT
+  if (( parent == 0 )); then parent=$LINE_KBIT; fi
 
   run tc qdisc replace dev "$dev" root handle 1: htb default 99 r2q 100
   run tc class add dev "$dev" parent 1: classid 1:1 htb rate "${parent}kbit" ceil "${parent}kbit" quantum 30000
 
   for (( i = 0; i < ${#app_names[@]}; i++ )); do
-    [[ $dir == down ]] && cap=${app_down[i]} || cap=${app_up[i]}
+    if [[ $dir == down ]]; then cap=${app_down[i]}; else cap=${app_up[i]}; fi
     (( cap > 0 )) || continue
-    (( cap > parent )) && cap=$parent
-    rate=$(( cap / 10 )); (( rate < 8 )) && rate=8
+    if (( cap > parent )); then cap=$parent; fi
+    rate=$(( cap / 10 )); if (( rate < 8 )); then rate=8; fi
     sum=$(( sum + rate ))
     local cls=$(( 0x10 + i + 1 )) mark
     printf -v cls '%x' "$cls"
@@ -131,7 +131,7 @@ build_tree() {
     run tc filter add dev "$dev" parent 1: protocol all prio 1 handle "$mark/$MARK_MASK" fw classid "1:$cls"
   done
 
-  def=$(( parent - sum )); (( def < parent / 2 )) && def=$(( parent / 2 ))
+  def=$(( parent - sum )); if (( def < parent / 2 )); then def=$(( parent / 2 )); fi
   run tc class add dev "$dev" parent 1:1 classid 1:99 htb rate "${def}kbit" ceil "${parent}kbit" prio 0 quantum 30000
   run tc qdisc add dev "$dev" parent 1:99 handle 99: fq_codel
 }
@@ -142,7 +142,7 @@ nft_ruleset() {
     (( app_down[i] > 0 || app_up[i] > 0 )) || continue
     printf -v mark '0x%08x' $(( (i + 1) << 24 ))
     local match=""
-    [[ ${app_mode[i]} == bulk ]] && match="meta l4proto tcp ct bytes > $(( app_bulk[i] * 1048576 )) "
+    if [[ ${app_mode[i]} == bulk ]]; then match="meta l4proto tcp ct bytes > $(( app_bulk[i] * 1048576 )) "; fi
     local IFS=,
     for p in ${app_cg[i]}; do
       [[ -n $p ]] || continue
@@ -195,10 +195,12 @@ cmd_apply() {
 
   local i any_down=$(( down > 0 )) any_up=$(( up > 0 )) any_bulk=0 any_app=0
   for (( i = 0; i < ${#app_names[@]}; i++ )); do
-    (( app_down[i] > 0 )) && any_down=1
-    (( app_up[i] > 0 )) && any_up=1
-    (( app_down[i] > 0 || app_up[i] > 0 )) && any_app=1
-    [[ ${app_mode[i]} == bulk ]] && (( app_down[i] > 0 || app_up[i] > 0 )) && any_bulk=1
+    if (( app_down[i] > 0 )); then any_down=1; fi
+    if (( app_up[i] > 0 )); then any_up=1; fi
+    if (( app_down[i] > 0 || app_up[i] > 0 )); then
+      any_app=1
+      if [[ ${app_mode[i]} == bulk ]]; then any_bulk=1; fi
+    fi
   done
 
   teardown
@@ -230,7 +232,7 @@ cmd_apply() {
 }
 
 main() {
-  [[ ${1:-} == --dry-run ]] && { dry=1; shift; }
+  if [[ ${1:-} == --dry-run ]]; then dry=1; shift; fi
   local cmd=${1:-}; shift || true
   case $cmd in
     version) echo "$VERSION"; return 0 ;;

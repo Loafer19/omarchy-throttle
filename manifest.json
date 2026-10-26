@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "yoyo.throttle",
   "name": "Throttle",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "author": "yoyo",
   "license": "MIT",
   "description": "Cap download/upload for the whole connection or any app (Heroic, Steam, browsers, torrents…), keep games fast, see live traffic and per-app history",

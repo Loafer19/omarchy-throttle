@@ -61,7 +61,7 @@ normalize() {
 
 settings_get() {
   local raw='{}'
-  [[ -s $SETTINGS ]] && raw=$(cat "$SETTINGS")
+  if [[ -s $SETTINGS ]]; then raw=$(cat "$SETTINGS"); fi
   normalize <<<"$raw" 2>/dev/null || normalize <<<'{}'
 }
 
@@ -81,7 +81,7 @@ route_dev() { ip -o "$1" route get "$2" 2>/dev/null | sed -n 's/.* dev \([^ ]*\)
 default_iface() {
   local dev
   dev=$(route_dev -4 1.1.1.1)
-  [[ -z $dev ]] && dev=$(route_dev -6 2606:4700:4700::1111)
+  if [[ -z $dev ]]; then dev=$(route_dev -6 2606:4700:4700::1111); fi
   printf '%s' "$dev"
 }
 
@@ -170,7 +170,7 @@ build_plan() {
   read -r enabled down up < <(jq -r '[.enabled, .downMbit * 1000, .upMbit * 1000] | @tsv' <<<"$s")
   PLAN=(); FPX=""
   local args=() any=0 disco=""
-  (( down > 0 || up > 0 )) && any=1
+  if (( down > 0 || up > 0 )); then any=1; fi
   load_procs
   while IFS=$'\t' read -r key _ ad au mode mib procs; do
     [[ -n $key ]] || continue
@@ -195,8 +195,8 @@ build_plan() {
 live_state() {
   local iface=$1 ifb=false egress=false
   [[ -n ${THROTTLE_LIVE_FIXTURE:-} ]] && { cat "$THROTTLE_LIVE_FIXTURE"; return; }  # tests
-  ip -o link show dev "$IFB" >/dev/null 2>&1 && ifb=true
-  [[ -n $iface ]] && tc qdisc show dev "$iface" root 2>/dev/null | grep -q '^qdisc htb 1: ' && egress=true
+  if ip -o link show dev "$IFB" >/dev/null 2>&1; then ifb=true; fi
+  if [[ -n $iface ]] && tc qdisc show dev "$iface" root 2>/dev/null | grep -q '^qdisc htb 1: '; then egress=true; fi
   printf '{"ifb":%s,"egress":%s}' "$ifb" "$egress"
 }
 
@@ -204,13 +204,13 @@ live_state() {
 live_matches() {
   local live=$1 want_down=0 want_up=0 a
   [[ ${PLAN[0]} == apply ]] || { [[ $live == "$LIVE_NONE" ]]; return; }
-  (( PLAN[4] > 0 )) && want_down=1
-  (( PLAN[6] > 0 )) && want_up=1
+  if (( PLAN[4] > 0 )); then want_down=1; fi
+  if (( PLAN[6] > 0 )); then want_up=1; fi
   for a in "${PLAN[@]}"; do
     [[ $a == *:*:*:*:*:* ]] || continue
     IFS=: read -r _ d u _ <<<"$a"
-    (( d > 0 )) && want_down=1
-    (( u > 0 )) && want_up=1
+    if (( d > 0 )); then want_down=1; fi
+    if (( u > 0 )); then want_up=1; fi
   done
   [[ $live == "{\"ifb\":$(jbool $want_down),\"egress\":$(jbool $want_up)}" ]]
 }
@@ -225,7 +225,7 @@ run_helper() {
 }
 
 tick() {
-  local force=0; [[ ${1:-} == --force ]] && force=1
+  local force=0; if [[ ${1:-} == --force ]]; then force=1; fi
   build_plan
   local fp prev live hs result="" err="" applied=false called=false
   fp=$(printf '%s\n' "${PLAN[*]}" "$FPX" | md5sum | cut -d' ' -f1)
@@ -246,8 +246,8 @@ tick() {
       fi
     fi
   fi
-  [[ -z $err && -f $RUN/error ]] && err=$(cat "$RUN/error")
-  [[ $(cat "$RUN/applied" 2>/dev/null) == "$fp" ]] && applied=true
+  if [[ -z $err && -f $RUN/error ]]; then err=$(cat "$RUN/error"); fi
+  if [[ $(cat "$RUN/applied" 2>/dev/null) == "$fp" ]]; then applied=true; fi
   jq -nc --arg helper "$hs" --arg iface "$IFACE" --arg mode "${PLAN[0]}" \
     --argjson applied "$applied" --argjson live "$live" --arg error "$err" \
     --argjson apps "$DISCO" --argjson changed "$called" --arg helperPath "$HELPER" \
@@ -341,7 +341,7 @@ stats_sample() {
   flock -w 5 9 || return 0
   stats_load
   local deltas today cutoff keep
-  deltas=$(ss_deltas "$RUN/stats.prev" bytes) || deltas=""  # bad sample: count nothing
+  if ! deltas=$(ss_deltas "$RUN/stats.prev" bytes); then deltas=""; fi  # bad sample: count nothing
   today=$(stats_today)
   keep=$(settings_get | jq -r .keepDays)  # normalized: always set, 1..365
   cutoff=$(date -d "$today -$keep days" +%F)
