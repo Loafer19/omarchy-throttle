@@ -1,7 +1,7 @@
 import QtQuick
 import qs.Commons
 import "../vendor/yoyo-ui"
-import "../Model.js" as Model
+import "../model/format.js" as Format
 
 // "↓ 21.4 Mbit/s  ↑ 768 kbit/s" (or byte totals) with a caption on the right.
 Item {
@@ -17,7 +17,7 @@ Item {
   implicitHeight: Style.space(34)
   height: implicitHeight
 
-  function fmt(v) { return root.bytes ? Model.formatBytes(v) : Model.formatRate(v, root.units) }
+  function fmt(v) { return Format.formatAmount(v, root.bytes, root.units) }
 
   Row {
     anchors.left: parent.left

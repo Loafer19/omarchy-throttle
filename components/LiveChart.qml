@@ -2,7 +2,8 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Commons
 import "../vendor/yoyo-ui"
-import "../Model.js" as Model
+import "../model/format.js" as Format
+import "../model/live.js" as Live
 
 // Traffic › Live: download over the last 90 s, stacked per app (top four by
 // volume in accent shades, "Other" = the rest of the interface incl. UDP).
@@ -11,7 +12,7 @@ Item {
 
   property var series: ({ names: [], layers: [], other: [], total: [], peak: 0, max: 1, count: 0 })
   property string units: "mbit"
-  readonly property int slots: Model.LIVE_SAMPLES
+  readonly property int slots: Live.LIVE_SAMPLES
   readonly property var alphas: [1, 0.66, 0.42, 0.26]
   readonly property int plotHeight: Style.space(118)
   readonly property int axisHeight: Style.space(16)
@@ -44,7 +45,7 @@ Item {
         Text {
           visible: index % 2 === 1
           y: Style.space(2)
-          text: Model.formatRate(root.series.max * parent.frac, root.units).replace(".0 ", " ")
+          text: Format.formatRate(root.series.max * parent.frac, root.units).replace(".0 ", " ")
           color: Theme.faint
           font.family: Theme.fontFamily
           font.pixelSize: Theme.caption

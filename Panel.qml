@@ -3,7 +3,15 @@ import QtQuick
 import Quickshell
 import qs.Commons
 import qs.Ui
-import "Model.js" as Model
+import "defaults.js" as Defaults
+import "model/format.js" as Format
+import "model/rates.js" as Rates
+import "model/apps.js" as Apps
+import "model/live.js" as Live
+import "model/stats.js" as Stats
+import "model/views.js" as Views
+import "model/settings.js" as Settings
+import "model/status.js" as Status
 import "vendor/yoyo-ui"
 import "components" as Throttle
 
@@ -34,22 +42,22 @@ Panel {
   property string detailKey: ""
   property bool fieldFocus: false
 
-  readonly property var tabs: Model.TABS
-  readonly property var subtabs: Model.subtabsOf(activeTab)
+  readonly property var tabs: Views.TABS
+  readonly property var subtabs: Views.subtabsOf(activeTab)
   readonly property string activeSub: activeTab === "limits" ? limitsSub : (activeTab === "traffic" ? trafficSub : "")
 
   readonly property var emptyList: []
-  readonly property var cfg: store && store.cfg ? store.cfg : Model.DEFAULTS
+  readonly property var cfg: store && store.cfg ? store.cfg : Defaults.CONFIG
   readonly property var status: store ? store.status : null
   readonly property var traffic: store ? store.traffic : null
   readonly property bool enabledOn: cfg.enabled !== false
   readonly property bool limiting: store ? store.limiting === true : false
   readonly property bool needsSetup: status !== null && status.helper !== "installed"
   readonly property string units: cfg.units === "mbyte" ? "mbyte" : "mbit"
-  readonly property var steps: Model.stepsOf(cfg)
+  readonly property var steps: Rates.stepsOf(cfg)
 
-  readonly property var liveSeries: Model.liveSeries(store && store.history ? store.history : emptyList, 4, units)
-  readonly property var statsSummary: Model.statsSummary(store ? store.stats : null, trafficSub === "live" ? "today" : trafficSub)
+  readonly property var liveSeries: Live.liveSeries(store && store.history ? store.history : emptyList, 4, units)
+  readonly property var statsSummary: Stats.statsSummary(store ? store.stats : null, trafficSub === "live" ? "today" : trafficSub)
   readonly property real statsPeak: {
     var m = 1
     for (var i = 0; i < statsSummary.apps.length; i++) m = Math.max(m, statsSummary.apps[i].down + statsSummary.apps[i].up)
@@ -58,24 +66,24 @@ Panel {
 
   readonly property var activeRows: {
     if (activeTab === "limits") {
-      if (limitsSub === "connection") return Model.connectionRows(cfg, status)
-      if (limitsSub === "add") return Model.addRows(cfg, traffic)
+      if (limitsSub === "connection") return Views.connectionRows(cfg, status)
+      if (limitsSub === "add") return Views.addRows(cfg, traffic)
       if (detailKey !== "") {
-        var d = Model.detailRows(cfg, status, traffic, detailKey, limiting, units)
+        var d = Views.detailRows(cfg, status, traffic, detailKey, limiting, units)
         if (d.length) return d
       }
-      return Model.appListRows(cfg, status, traffic, limiting, units)
+      return Views.appListRows(cfg, status, traffic, limiting, units)
     }
     if (activeTab === "traffic") {
-      if (trafficSub === "live") return Model.liveRows(cfg, traffic, store && store.history ? store.history : emptyList)
-      return Model.historyRows(cfg, statsSummary, !!(store && store.stats))
+      if (trafficSub === "live") return Views.liveRows(cfg, traffic, store && store.history ? store.history : emptyList)
+      return Views.historyRows(cfg, statsSummary, !!(store && store.stats))
     }
-    return Model.settingsRows(cfg, status, !needsSetup)
+    return Settings.settingsRows(cfg, status, !needsSetup)
   }
   readonly property bool inDetail: activeTab === "limits" && limitsSub === "apps" && detailKey !== "" && activeRows.length > 0 && activeRows[0].kind === "crumb"
 
   readonly property string subCaption: {
-    if (activeTab === "limits") return Model.appList(cfg).length + " of " + Model.MAX_APPS + " apps"
+    if (activeTab === "limits") return Apps.appList(cfg).length + " of " + Apps.MAX_APPS + " apps"
     if (activeTab === "traffic") return (status && status.iface ? status.iface : "network") + (trafficSub === "live" ? " · every 1.5 s" : "")
     return ""
   }
@@ -118,7 +126,7 @@ Panel {
 
   function setRate(row, mbit) {
     if (!store || !row) return
-    if (row.app) store.setApp(row.app, row.field, Model.clampMbit(mbit))
+    if (row.app) store.setApp(row.app, row.field, Format.clampMbit(mbit))
     else store.setGlobal(row.field, mbit)
   }
 
@@ -129,7 +137,7 @@ Panel {
 
   function applyChoice(row, key) {
     if (!store || !row) return
-    var p = Model.settingPatch(cfg, row.setting, key)
+    var p = Settings.settingPatch(cfg, row.setting, key)
     if (p) store.setPatch(p)
   }
 
@@ -149,7 +157,7 @@ Panel {
   // Add a program and open its page, so the next keystroke sets its cap.
   function addAndOpen(proc, label) {
     if (!store) return
-    var p = Model.addPatch(cfg, proc, label)
+    var p = Apps.addPatch(cfg, proc, label)
     if (!p) return
     var key = Object.keys(p.apps)[0]
     if (store.addApp(proc, label) !== false) openApp(key)
@@ -189,7 +197,7 @@ Panel {
   property string focusSection: "rows"
   property int selectedIndex: 0
 
-  function selectable(i) { return Model.selectableRow(activeRows[i]) }
+  function selectable(i) { return Views.selectableRow(activeRows[i]) }
   function firstSelectable() {
     for (var i = 0; i < activeRows.length; i++) if (selectable(i)) return i
     return -1
@@ -252,9 +260,9 @@ Panel {
     if (r.kind === "rate") {
       var item = rowItem(selectedIndex)
       if (item && item.step) item.step(dx)
-      else setRate(r, Model.stepPreset(r.value, dx, steps))
+      else setRate(r, Rates.stepPreset(r.value, dx, steps))
     } else if (r.kind === "toggle") toggleRow(r)
-    else if (r.kind === "choice") applyChoice(r, Model.stepChoice(r, dx, false))
+    else if (r.kind === "choice") applyChoice(r, Settings.stepChoice(r, dx, false))
   }
 
   function moveCursor(dx, dy) {
@@ -314,7 +322,7 @@ Panel {
       if (r.key) openApp(r.key)
       else if (r.addable) addAndOpen(r.proc, r.name)
     }
-    else if (r.kind === "choice") applyChoice(r, Model.stepChoice(r, 1, true))
+    else if (r.kind === "choice") applyChoice(r, Settings.stepChoice(r, 1, true))
     else if (r.kind === "action") { if (item && item.activate) item.activate() }
   }
 
@@ -409,7 +417,7 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             elide: Text.ElideRight
             textFormat: Text.PlainText
-            text: Model.statusLine(root.status, root.cfg)
+            text: Status.statusLine(root.status, root.cfg)
             color: root.status && root.status.error ? Theme.urgent : (root.limiting ? Theme.fg : Theme.dim)
             font.family: Theme.fontFamily
             font.pixelSize: Theme.caption

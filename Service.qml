@@ -1,7 +1,11 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import "Model.js" as Model
+import "defaults.js" as Defaults
+import "model/format.js" as Format
+import "model/apps.js" as Apps
+import "model/live.js" as Live
+import "model/status.js" as Status
 
 // Always loaded (keepLoaded): re-applies limits at login, when the network
 // interface changes, and when a limited app starts or restarts (its cgroup is
@@ -20,7 +24,7 @@ Item {
   property var barWidgetRegistry: null
   property string omarchyPath: ""
 
-  property var cfg: Model.DEFAULTS
+  property var cfg: Defaults.CONFIG
   property var status: null
   property var traffic: null
   property bool loaded: false
@@ -30,13 +34,13 @@ Item {
   property bool trafficWanted: false
   readonly property string widgetMode: cfg && (cfg.barWidget === "dot" || cfg.barWidget === "rate") ? cfg.barWidget : "icon"
   readonly property bool widgetWantsTraffic: widgetMode === "rate" || (widgetMode === "dot" && limiting)
-  // Traffic › Live: the last 90 s of samples (Model.pushSample).
+  // Traffic › Live: the last 90 s of samples (Live.pushSample).
   property var history: []
   // Per-day history ({ today, days: [...] }); refreshed while the Stats tab is open.
   property var stats: null
   property bool statsWanted: false
 
-  readonly property bool limiting: Model.isLimiting(status, cfg)
+  readonly property bool limiting: Status.isLimiting(status, cfg)
   readonly property string script:
     Qt.resolvedUrl("scripts/backend.sh").toString().replace(/^file:\/\//, "")
   readonly property string installScript:
@@ -52,7 +56,7 @@ Item {
   function backend(args) { return ["bash", root.script].concat(args) }
 
   function setPatch(patch) {
-    root.cfg = Model.merged(root.cfg, patch)
+    root.cfg = Apps.merged(root.cfg, patch)
     root.settingsChanged()
     pendingPatches.push(patch)
     flushPatches()
@@ -64,7 +68,7 @@ Item {
     if (setProc.running || pendingPatches.length === 0) return
     var merged = {}
     // keepNulls: { apps: { key: null } } is how an app gets removed.
-    for (var i = 0; i < pendingPatches.length; i++) merged = Model.merged(merged, pendingPatches[i], true)
+    for (var i = 0; i < pendingPatches.length; i++) merged = Apps.merged(merged, pendingPatches[i], true)
     pendingPatches = []
     setProc.command = root.backend(["settings-set", JSON.stringify(merged)])
     setProc.running = true
@@ -72,15 +76,15 @@ Item {
 
   function setEnabled(on) { root.setPatch({ enabled: on === true }) }
   function toggleEnabled() { root.setEnabled(!(root.cfg && root.cfg.enabled !== false)) }
-  function setGlobal(field, mbit) { root.setPatch(Model.patchFor("", field, Model.clampMbit(mbit))) }
-  function setApp(app, field, value) { root.setPatch(Model.patchFor(app, field, value)) }
+  function setGlobal(field, mbit) { root.setPatch(Apps.patchFor("", field, Format.clampMbit(mbit))) }
+  function setApp(app, field, value) { root.setPatch(Apps.patchFor(app, field, value)) }
   function addApp(proc, label) {
-    var p = Model.addPatch(root.cfg, proc, label)
+    var p = Apps.addPatch(root.cfg, proc, label)
     if (p) root.setPatch(p)
     return p !== null
   }
   function removeApp(key) {
-    var p = Model.removePatch(root.cfg, key)
+    var p = Apps.removePatch(root.cfg, key)
     if (p) root.setPatch(p)
   }
 
@@ -177,7 +181,7 @@ Item {
           var data = JSON.parse(text)
           if (data && Array.isArray(data.apps)) {
             root.traffic = data
-            root.history = Model.pushSample(root.history, data, Date.now(), Model.LIVE_SAMPLES)
+            root.history = Live.pushSample(root.history, data, Date.now(), Live.LIVE_SAMPLES)
           }
         } catch (e) {}
       }

@@ -1,11 +1,12 @@
 import qs.Commons as Commons
 import QtQuick
-import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "vendor/yoyo-ui"
-import "Model.js" as Model
+import "defaults.js" as Defaults
+import "model/format.js" as Format
+import "model/status.js" as Status
 
 // Bar icon. Settings › Bar widget: "icon" (default), "dot" (a small urgent
 // dot while a cap is maxed out, ≥ 90 %), "rate" (icon + live download).
@@ -64,12 +65,12 @@ BarWidget {
   }
 
   readonly property var store: panelItem ? panelItem.store : null
-  readonly property var cfg: store && store.cfg ? store.cfg : Model.DEFAULTS
+  readonly property var cfg: store && store.cfg ? store.cfg : Defaults.CONFIG
   readonly property string mode: cfg.barWidget === "dot" || cfg.barWidget === "rate" ? cfg.barWidget : "icon"
   readonly property bool limiting: store ? store.limiting === true : false
   readonly property bool paused: store ? (store.cfg && store.cfg.enabled === false) : false
   readonly property bool failing: store && store.status ? (store.status.error || "") !== "" : false
-  readonly property bool biting: limiting && store !== null && Model.biting(cfg, store.traffic)
+  readonly property bool biting: limiting && store !== null && Status.biting(cfg, store.traffic)
 
   BarIconButton {
     id: button
@@ -82,7 +83,7 @@ BarWidget {
     active: root.limiting || root.failing
     activeColor: root.failing ? Commons.Color.urgent : Commons.Color.accent
     dimmed: root.paused
-    tooltipText: root.store ? Model.tooltipText(root.cfg, root.store.status, root.store.traffic, root.limiting, root.cfg.units) : "Throttle"
+    tooltipText: root.store ? Status.tooltipText(root.cfg, root.store.status, root.store.traffic, root.limiting, root.cfg.units) : "Throttle"
     onPressed: function(b) { root.press(b) }
 
     // "dot" mode: a cap is maxed out right now. A small badge just outside
@@ -108,7 +109,7 @@ BarWidget {
     anchors.leftMargin: -Style.space(4)
     anchors.verticalCenter: button.verticalCenter
     text: root.store && root.store.traffic && root.store.traffic.iface
-      ? "↓" + Model.shortRate(root.store.traffic.iface.down, root.cfg.units) : ""
+      ? "↓" + Format.shortRate(root.store.traffic.iface.down, root.cfg.units) : ""
     color: root.failing ? Commons.Color.urgent : (root.host ? root.host.barForeground : Commons.Color.foreground)
     opacity: root.paused ? 0.5 : 1
     font.family: root.host ? root.host.fontFamily : Style.fontFamily

@@ -2,7 +2,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "../vendor/yoyo-ui"
-import "../Model.js" as Model
+import "../model/format.js" as Format
 
 // Traffic rows (live rates or byte totals) and "+ Add" candidates.
 CursorSurface {
@@ -108,7 +108,7 @@ CursorSurface {
     Text {
       width: Style.space(86)
       horizontalAlignment: Text.AlignRight
-      text: "↓ " + (root.bytes ? Model.formatBytes(root.down) : Model.formatRate(root.down, root.units))
+      text: "↓ " + Format.formatAmount(root.down, root.bytes, root.units)
       color: root.down > 0 ? Theme.fg : Theme.faint
       font.family: Theme.fontFamily
       font.pixelSize: Theme.caption
@@ -116,7 +116,7 @@ CursorSurface {
     Text {
       width: Style.space(86)
       horizontalAlignment: Text.AlignRight
-      text: "↑ " + (root.bytes ? Model.formatBytes(root.up) : Model.formatRate(root.up, root.units))
+      text: "↑ " + Format.formatAmount(root.up, root.bytes, root.units)
       color: root.up > 0 ? Theme.dim : Theme.faint
       font.family: Theme.fontFamily
       font.pixelSize: Theme.caption

@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Commons
 import "../vendor/yoyo-ui"
-import "../Model.js" as Model
 
 // Per-day bars (download solid, upload faint on top) for Traffic › Today / 7 / 30 days.
 Item {

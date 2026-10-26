@@ -2,7 +2,8 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "../vendor/yoyo-ui"
-import "../Model.js" as Model
+import "../model/format.js" as Format
+import "../model/rates.js" as Rates
 
 // One cap: Off / steps / Custom chips; Custom opens a Mbit/s field inline,
 // left of the chips, so the row keeps its height and the title stays put.
@@ -11,11 +12,11 @@ CursorSurface {
 
   property string title: ""
   property int value: 0
-  property var steps: Model.PRESETS
+  property var steps: Rates.PRESETS
 
   // Custom stays open after the user picks it even if they type a step value.
   property bool customOpen: false
-  readonly property string selectedKey: Model.rateKey(root.value, root.customOpen, root.steps)
+  readonly property string selectedKey: Rates.rateKey(root.value, root.customOpen, root.steps)
   readonly property bool showField: root.selectedKey === "custom"
 
   signal rowHovered()
@@ -42,7 +43,7 @@ CursorSurface {
   // Keyboard h/l from the panel: step through the chips and leave Custom.
   function step(delta) {
     root.customOpen = false
-    root.valuePicked(Model.stepPreset(root.value, delta, root.steps))
+    root.valuePicked(Rates.stepPreset(root.value, delta, root.steps))
   }
 
   MouseArea {
@@ -74,7 +75,7 @@ CursorSurface {
       width: parent.width
       elide: Text.ElideRight
       textFormat: Text.PlainText
-      text: Model.capDetail(root.value)
+      text: Format.capDetail(root.value)
       color: Theme.dim
       font.family: Theme.fontFamily
       font.pixelSize: Theme.caption
@@ -95,7 +96,7 @@ CursorSurface {
       label: ""
       value: root.value
       from: 1
-      to: Model.MAX_MBIT
+      to: Format.MAX_MBIT
       stepSize: 1
       foreground: Theme.fg
       fontFamily: Theme.fontFamily
@@ -109,7 +110,7 @@ CursorSurface {
     ChipRow {
       anchors.verticalCenter: parent.verticalCenter
       compact: true
-      chips: Model.rateChips(root.steps)
+      chips: Rates.rateChips(root.steps)
       selectedKey: root.selectedKey
       onSelected: function(key) { root.pick(key) }
       onChipHovered: function(index) { root.rowHovered() }

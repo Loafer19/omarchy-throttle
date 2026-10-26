@@ -1,16 +1,26 @@
-// Sanity tests for Model.js outside QML:  node tests/model.test.js
+// Sanity tests for model/*.js outside QML:  node tests/model.test.js
 const fs = require("fs"), path = require("path"), vm = require("vm")
 const dir = path.join(__dirname, "..")
-const ctx = { Defaults: {} }
-vm.createContext(ctx)
-vm.runInContext(fs.readFileSync(path.join(dir, "defaults.js"), "utf8") + "\nDefaults.CONFIG = CONFIG", ctx)
-vm.runInContext(fs.readFileSync(path.join(dir, "Model.js"), "utf8").replace(/^\.(pragma|import).*$/gm, ""), ctx)
+// Loads a QML JavaScript resource the way the engine does: every `.import
+// "file.js" as Name` becomes its own (shared, .pragma library) module object.
+const modules = {}
+function load(file) {
+  if (modules[file]) return modules[file]
+  const ctx = modules[file] = vm.createContext({})
+  const src = fs.readFileSync(file, "utf8")
+  for (const m of src.matchAll(/^\.import "([^"]+)" as (\w+)/gm)) ctx[m[2]] = load(path.join(path.dirname(file), m[1]))
+  vm.runInContext(src.replace(/^\.(pragma|import).*$/gm, ""), ctx, { filename: file })
+  return ctx
+}
+// M: every module's names in one namespace (modules never redefine each
+// other's names, they only alias them), so tests don't care where a helper lives.
+const modelFiles = fs.readdirSync(path.join(dir, "model")).filter(f => f.endsWith(".js")).sort()
+const M = Object.assign({}, ...modelFiles.map(f => load(path.join(dir, "model", f))))
 let pass = 0, fail = 0
 function eq(label, got, want) {
   const g = JSON.stringify(got), w = JSON.stringify(want)
   if (g === w) { pass++; console.log("PASS  " + label) } else { fail++; console.log("FAIL  " + label + "\n      got " + g + " want " + w) }
 }
-const M = ctx
 eq("rateKey preset", M.rateKey(25, false), "25")
 eq("rateKey custom value", M.rateKey(30, false), "custom")
 eq("rateKey custom open", M.rateKey(25, true), "custom")
@@ -160,6 +170,15 @@ for (const n of ["aa", "bb", "cc"]) { many = M.merged(many, M.addPatch(many, n))
 many = M.merged(many, M.patchFor("heroic", "downMbit", 5))
 const manyStatus = { helper: "installed", applied: true, mode: "apply", iface: "eth0", error: "", apps: ["heroic", "aa", "bb", "cc"].map(k => ({ key: k, running: true, cgroups: ["x"], refused: [], shared: [] })) }
 eq("statusLine shows 3 names then +N", M.statusLine(manyStatus, many), "Limiting on eth0 · Heroic · Aa · +2 apps")
+
+// model/*.js helpers behind the facade
+eq("findApp by key / label / miss", [M.findApp(M.DEFAULTS, "key", "steam").label, M.findApp(M.DEFAULTS, "label", "Heroic").key, M.findApp(M.DEFAULTS, "key", "nope")], ["Steam", "heroic", null])
+eq("keyOfLabel / labelCapped", [M.keyOfLabel(cfg, "Heroic"), M.keyOfLabel(cfg, "Nope"), M.labelCapped(cfg, "Heroic"), M.labelCapped(cfg, "Steam")], ["heroic", "", true, false])
+eq("formatAmount bytes vs rate", [M.formatAmount(2048, true, "mbit"), M.formatAmount(1250, false, "mbit")], ["2 KiB", "10 kbit/s"])
+eq("anyCap: whole connection only", M.anyCap(M.merged(M.DEFAULTS, { upMbit: 5 })), true)
+const keepRow = M.settingsRows(M.merged(M.DEFAULTS, { keepDays: 10 }), null, true).find(r => r.setting === "keepDays")
+eq("keep choices: unit on the last, odd value appended", keepRow.options.map(o => o.label), ["7", "35", "90 days", "10 days"])
+eq("every model module loads", modelFiles.length, 8)
 
 console.log("\npassed " + pass + ", failed " + fail)
 process.exit(fail ? 1 : 0)

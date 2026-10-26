@@ -1,4 +1,4 @@
-// Shared by Model.js (QML) and scripts/backend.sh (read as JSON after the
+// Shared by model/*.js (QML) and scripts/backend.sh (read as JSON after the
 // "var CONFIG = " prefix), so keep this file a single plain JSON object.
 // "presets" are the built-in apps (always listed, can't be removed);
 // "limits" bound what settings may hold (the root helper accepts at most 8 apps).

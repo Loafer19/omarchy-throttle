@@ -2,7 +2,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "../vendor/yoyo-ui"
-import "../Model.js" as Model
+import "../model/apps.js" as Apps
 
 // "+ Add" by process name (as in `ps -o comm`, up to 15 characters).
 CursorSurface {
@@ -13,8 +13,8 @@ CursorSurface {
   readonly property string name: input.text.trim()
   readonly property string problem: {
     if (root.name === "") return ""
-    if (!Model.validName(root.name)) return "Not allowed: letters, digits, space . _ + : -, no shells or system services"
-    if (Model.knownProc(root.cfg, Model.procOf(root.name))) return "Already in the list"
+    if (!Apps.validName(root.name)) return "Not allowed: letters, digits, space . _ + : -, no shells or system services"
+    if (Apps.knownProc(root.cfg, Apps.procOf(root.name))) return "Already in the list"
     return ""
   }
   readonly property bool canSubmit: root.name !== "" && root.problem === ""
