@@ -40,11 +40,11 @@ Item {
         required property int index
         y: plot.height * (1 - (index + 1) / 4)
         width: plot.width
-        height: Style.spacing.hairline
+        height: Theme.hairline
         color: Theme.line
       }
     }
-    Rectangle { y: plot.height - height; width: plot.width; height: Style.spacing.hairline; color: Theme.tint(Theme.fg, 0.24) }
+    Rectangle { y: plot.height - height; width: plot.width; height: Theme.hairline; color: Theme.tint(Theme.fg, 0.24) }
 
     Canvas {
       id: canvas

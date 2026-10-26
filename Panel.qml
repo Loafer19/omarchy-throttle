@@ -308,7 +308,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(520))
+    contentWidth: panel.fittedContentWidth(Theme.panelWidth)
     contentHeight: panel.fittedContentHeight(Style.space(560))
 
     PanelKeyCatcher {
@@ -375,7 +375,7 @@ Panel {
         anchors.topMargin: Theme.edge
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: footerHints.top
+        anchors.bottom: footerBar.top
         anchors.bottomMargin: Style.space(4)
         clip: true
         spacing: 0
@@ -384,19 +384,15 @@ Panel {
         delegate: Throttle.RowDelegate { panel: root }
       }
 
-      PanelSeparator {
-        anchors.bottom: footerHints.top
-        anchors.bottomMargin: Style.space(4)
-        foreground: Theme.fg
-        strength: 0.08
-      }
-
-      KeyHints {
-        id: footerHints
+      // Key hints under a faint rule, so a scrolled list ends cleanly.
+      StatusFooter {
+        id: footerBar
         anchors.bottom: parent.bottom
         anchors.left: parent.left
-        anchors.leftMargin: Theme.edge
+        anchors.right: parent.right
         height: Style.space(16)
+        separator: true
+        separatorGap: Style.space(4)
         hints: root.keyHints
       }
     }
