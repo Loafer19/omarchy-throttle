@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Commons
 import "../vendor/yoyo-ui"
@@ -21,7 +22,7 @@ Item {
     x: root.edgeMargin
     width: parent.width - root.edgeMargin * 2
     y: parent.height - root.labelHeight
-    height: Style.spacing.hairline
+    height: Style.space(1)
     color: Theme.line
   }
 
@@ -31,9 +32,9 @@ Item {
     Item {
       id: barSlot
       required property int index
-      readonly property var bar: root.bars[index] || ({})
+      readonly property var bar: root.bars[barSlot.index] || ({})
       readonly property real area: root.height - root.labelHeight - Style.space(6)
-      x: root.edgeMargin + index * root.slot
+      x: root.edgeMargin + barSlot.index * root.slot
       width: root.slot
       height: root.height
 
@@ -64,7 +65,7 @@ Item {
         text: barSlot.bar.today && root.bars.length <= 7 ? "Today" : (barSlot.bar.label || "")
         color: barSlot.bar.today ? Theme.fg : Theme.faint
         font.family: Theme.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: Theme.caption
         font.bold: barSlot.bar.today === true
       }
     }

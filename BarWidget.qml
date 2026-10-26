@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "vendor/yoyo-ui"
 import "Model.js" as Model
 
 // Bar icon. Settings › Bar widget: "icon" (default), "dot" (a small urgent
@@ -12,16 +13,18 @@ BarWidget {
   id: root
   moduleName: "yoyo.throttle"
 
-  readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
-  readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
+  // The panel is loaded by URL, so it is untyped here (var) on purpose.
+  readonly property var panelItem: panelLoader.item
+  readonly property bool opened: panelItem ? panelItem.opened === true : false
+  readonly property bool popoutSwitchClosing: panelItem ? panelItem.popoutSwitchClosing === true : false
 
-  function open() { if (panelLoader.item) panelLoader.item.open() }
-  function close() { if (panelLoader.item) panelLoader.item.close() }
-  function toggle() { if (panelLoader.item) panelLoader.item.toggle() }
-  function closeForPopoutSwitch() { if (panelLoader.item) panelLoader.item.closeForPopoutSwitch() }
+  function open() { if (panelItem) panelItem.open() }
+  function close() { if (panelItem) panelItem.close() }
+  function toggle() { if (panelItem) panelItem.toggle() }
+  function closeForPopoutSwitch() { if (panelItem) panelItem.closeForPopoutSwitch() }
 
   function injectPanel() {
-    var target = panelLoader.item
+    var target = root.panelItem
     if (!target) return
     if ("bar" in target) target.bar = root.bar
     if ("settings" in target) target.settings = root.settings
@@ -29,7 +32,9 @@ BarWidget {
     if ("hostWidget" in target) target.hostWidget = root
   }
 
-  readonly property bool vertical: root.bar ? root.bar.vertical === true : false
+  // Host objects typed QtObject in the base / Style; read them untyped.
+  readonly property var host: root.bar
+  readonly property var barStyle: Style.bar
   readonly property bool showRate: mode === "rate" && !vertical && store !== null && store.traffic !== null
   implicitWidth: button.implicitWidth + (showRate ? rateText.implicitWidth + Style.space(2) : 0)
   implicitHeight: button.implicitHeight
@@ -58,7 +63,6 @@ BarWidget {
     function resume(): void { if (root.panelItem && root.panelItem.store) root.panelItem.store.setEnabled(true) }
   }
 
-  readonly property var panelItem: panelLoader.item
   readonly property var store: panelItem ? panelItem.store : null
   readonly property var cfg: store && store.cfg ? store.cfg : Model.DEFAULTS
   readonly property string mode: cfg.barWidget === "dot" || cfg.barWidget === "rate" ? cfg.barWidget : "icon"
@@ -85,14 +89,14 @@ BarWidget {
     // the glyph's top-right corner (same on horizontal and vertical bars).
     Rectangle {
       id: badge
-      readonly property real glyphHalf: Math.max(button.glyphPaintedWidth, Style.bar.iconCanvas * 0.75) / 2
+      readonly property real glyphHalf: Math.max(button.glyphPaintedWidth, root.barStyle.iconCanvas * 0.75) / 2
       visible: root.mode === "dot" && root.biting && !root.paused
-      width: Math.max(4, Math.round(Style.bar.iconCanvas * 0.32))
+      width: Math.max(4, Math.round(root.barStyle.iconCanvas * 0.32))
       height: width
       radius: width / 2
       color: Commons.Color.urgent
       x: Math.min(parent.width - width, Math.round(parent.width / 2 + glyphHalf - 1))
-      y: Math.max(0, Math.round(parent.height / 2 - Style.bar.iconCanvas / 2 - height / 2 + 1))
+      y: Math.max(0, Math.round(parent.height / 2 - root.barStyle.iconCanvas / 2 - height / 2 + 1))
     }
   }
 
@@ -105,10 +109,10 @@ BarWidget {
     anchors.verticalCenter: button.verticalCenter
     text: root.store && root.store.traffic && root.store.traffic.iface
       ? "↓" + Model.shortRate(root.store.traffic.iface.down, root.cfg.units) : ""
-    color: root.failing ? Commons.Color.urgent : (root.bar ? root.bar.barForeground : Commons.Color.foreground)
+    color: root.failing ? Commons.Color.urgent : (root.host ? root.host.barForeground : Commons.Color.foreground)
     opacity: root.paused ? 0.5 : 1
-    font.family: root.bar ? root.bar.fontFamily : Style.font.family
-    font.pixelSize: Style.font.caption
+    font.family: root.host ? root.host.fontFamily : Style.fontFamily
+    font.pixelSize: Theme.caption
     MouseArea {
       anchors.fill: parent
       acceptedButtons: Qt.LeftButton | Qt.RightButton

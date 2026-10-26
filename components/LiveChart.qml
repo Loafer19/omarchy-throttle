@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Commons
 import "../vendor/yoyo-ui"
@@ -102,10 +103,11 @@ Item {
   Repeater {
     model: [{ t: "−90 s", f: 0 }, { t: "−60 s", f: 1 / 3 }, { t: "−30 s", f: 2 / 3 }, { t: "now", f: 1 }]
     Text {
+      id: tick
       required property var modelData
       y: root.plotHeight + Style.space(3)
-      x: Theme.edge + plot.width * modelData.f - (modelData.f === 0 ? 0 : modelData.f === 1 ? width : width / 2)
-      text: modelData.t
+      x: Theme.edge + plot.width * tick.modelData.f - (tick.modelData.f === 0 ? 0 : tick.modelData.f === 1 ? width : width / 2)
+      text: tick.modelData.t
       color: Theme.faint
       font.family: Theme.fontFamily
       font.pixelSize: Theme.caption
@@ -123,18 +125,19 @@ Item {
     Repeater {
       model: root.series.names.length + 1
       Row {
+        id: entry
         required property int index
-        readonly property bool isOther: index >= root.series.names.length
+        readonly property bool isOther: entry.index >= root.series.names.length
         spacing: Style.space(5)
         Rectangle {
           anchors.verticalCenter: parent.verticalCenter
           width: Style.space(8); height: width
           radius: Style.cornerRadius
-          color: parent.isOther ? Theme.tint(Theme.fg, 0.16) : Theme.tint(Theme.accent, root.alphas[Math.min(parent.index, 3)])
+          color: entry.isOther ? Theme.tint(Theme.fg, 0.16) : Theme.tint(Theme.accent, root.alphas[Math.min(entry.index, 3)])
         }
         Text {
           textFormat: Text.PlainText
-          text: parent.isOther ? "Other · UDP" : root.series.names[parent.index]
+          text: entry.isOther ? "Other · UDP" : root.series.names[entry.index]
           color: Theme.dim
           font.family: Theme.fontFamily
           font.pixelSize: Theme.caption

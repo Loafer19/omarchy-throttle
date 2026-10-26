@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Commons
 import "../vendor/yoyo-ui"
@@ -16,7 +17,7 @@ Item {
   readonly property var item: loader.item
 
   width: ListView.view ? ListView.view.width : 0
-  height: loader.item ? loader.item.height : 0
+  height: loader.item ? (loader.item as Item).height : 0
 
   function hover() { if (wrap.panel) wrap.panel.setRowCursor(wrap.index) }
 

@@ -16,7 +16,7 @@ Rectangle {
   height: Style.space(18)
   radius: Style.cornerRadius
   color: set ? Theme.tint(Theme.accent, 0.12) : "transparent"
-  border.width: Style.spacing.hairline
+  border.width: Style.space(1)
   border.color: set ? Theme.tint(Theme.accent, 0.55) : Theme.line
 
   Text {

@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import qs.Commons
@@ -237,7 +238,7 @@ Panel {
   }
 
   function rowItem(index) {
-    var wrap = list.itemAtIndex ? list.itemAtIndex(index) : null
+    var wrap = list.itemAtIndex ? list.itemAtIndex(index) as Throttle.RowDelegate : null
     return wrap ? wrap.item : null
   }
 
@@ -376,7 +377,7 @@ Panel {
       onTextKey: function(text) { if (text === "p") root.toggleEnabled() }
 
       Column {
-        id: header
+        id: headerBox
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
@@ -434,7 +435,7 @@ Panel {
           height: visible ? setupCol.implicitHeight + Style.space(16) : 0
           radius: Style.cornerRadius
           color: Theme.tint(Theme.accent, 0.12)
-          border.width: Style.spacing.hairline
+          border.width: Style.space(1)
           border.color: Theme.tint(Theme.accent, 0.4)
 
           Column {
@@ -525,11 +526,11 @@ Panel {
 
       ListView {
         id: list
-        anchors.top: header.bottom
+        anchors.top: headerBox.bottom
         anchors.topMargin: Theme.edge
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: footer.top
+        anchors.bottom: footerHints.top
         anchors.bottomMargin: Style.space(4)
         clip: true
         spacing: 0
@@ -539,14 +540,14 @@ Panel {
       }
 
       PanelSeparator {
-        anchors.bottom: footer.top
+        anchors.bottom: footerHints.top
         anchors.bottomMargin: Style.space(4)
         foreground: Theme.fg
         strength: 0.08
       }
 
       KeyHints {
-        id: footer
+        id: footerHints
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.leftMargin: Theme.edge
