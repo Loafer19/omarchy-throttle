@@ -193,6 +193,28 @@ Item {
     onTriggered: root.sampleStats()
   }
 
+  // The plugin's one IPC target (`qs ipc call yoyo.throttle toggle`). Here,
+  // not in BarWidget.qml: the bar builds a widget per monitor, and every extra
+  // handler for the target is "registered but will not be used". Panel calls go
+  // through the shell, which opens the bar's panel on the focused monitor (as
+  // `omarchy-shell shell toggle yoyo.throttle` does).
+  readonly property string pluginId: "yoyo.throttle"
+  function host() {
+    var s = root.shell
+    return s && typeof s.summon === "function" && typeof s.hide === "function"
+      && typeof s.toggle === "function" ? s : null
+  }
+
+  IpcHandler {
+    target: "yoyo.throttle"
+
+    function open(): void { var s = root.host(); if (s) s.summon(root.pluginId, "") }
+    function close(): void { var s = root.host(); if (s) s.hide(root.pluginId) }
+    function toggle(): void { var s = root.host(); if (s) s.toggle(root.pluginId, "") }
+    function pause(): void { root.setEnabled(false) }
+    function resume(): void { root.setEnabled(true) }
+  }
+
   Component.onCompleted: getProc.run(["settings-get"])
   // Shell reload / logout: write the in-memory (tmpfs) day totals to disk.
   Component.onDestruction: Quickshell.execDetached(root.backend(["stats-sample", "--sync"]))

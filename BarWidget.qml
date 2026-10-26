@@ -1,6 +1,5 @@
 import qs.Commons as Commons
 import QtQuick
-import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "vendor/yoyo-ui"
@@ -54,15 +53,8 @@ BarWidget {
     }
   }
 
-  IpcHandler {
-    target: "yoyo.throttle"
-
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function toggle(): void { root.toggle() }
-    function pause(): void { if (root.panelItem && root.panelItem.store) root.panelItem.store.setEnabled(false) }
-    function resume(): void { if (root.panelItem && root.panelItem.store) root.panelItem.store.setEnabled(true) }
-  }
+  // No IpcHandler here: the bar builds this widget once per monitor, and a
+  // target may have only one handler, so Service.qml owns `yoyo.throttle`.
 
   readonly property var store: panelItem ? panelItem.store : null
   readonly property var cfg: store && store.cfg ? store.cfg : Defaults.CONFIG
