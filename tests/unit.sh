@@ -219,13 +219,14 @@ for bad in \
   "apply --iface eth0 --down 0 --up 0 --app google-chrome-stable:1000:0:all:4:$good" \
   "clear extra" \
   "rm -rf /"; do
-  # shellcheck disable=SC2086
-  out=$(H $bad); rc=$?
+  read -ra argv <<<"$bad"  # plain word splitting: quotes inside $bad stay literal
+  out=$(H "${argv[@]}"); rc=$?
   if (( rc == 2 )); then ok "rejects: ${bad:0:80}"; else no "rejects: $bad" "rc=$rc $out"; fi
 done
 out=$(H apply --iface eth0 --down 50000 --up 20000 --app "heroic:10000:5000:bulk:4:$good"); rc=$?
 expect "accepts a valid apply" "$rc" "0"
-out8=$(H apply --iface eth0 --down 0 --up 0 $(for i in 1 2 3 4 5 6 7 8; do printf ' --app custom-%s:1000:0:all:4:%s' "$i" "$good"; done)); rc=$?
+apps8=(); for i in 1 2 3 4 5 6 7 8; do apps8+=(--app "custom-$i:1000:0:all:4:$good"); done
+out8=$(H apply --iface eth0 --down 0 --up 0 "${apps8[@]}"); rc=$?
 expect "accepts 8 apps incl. custom keys" "$rc $(grep -c 'socket cgroupv2' <<<"$out8")" "0 8"
 expect_has "nft rule matches the escaped cgroup path" "$out" "socket cgroupv2 level 5 \"$good\" meta l4proto tcp ct bytes > 4194304"
 expect_match "ingress redirect via ifb with ctinfo" "$out" "matchall action ctinfo cpmark 0x0f000000 action mirred egress redirect dev ifb-throttle"
@@ -233,6 +234,38 @@ expect_match "heroic class ceil 10 Mbit" "$out" "classid 1:11 htb rate 1000kbit 
 expect_match "conntrack accounting enabled for bulk mode" "$out" "echo 1 > /proc/sys/net/netfilter/nf_conntrack_acct"
 expect "refuses real run without root" "$(bash "$helper" clear 2>&1; echo "rc=$?")" $'throttle-helper: must run as root (via sudo)\nrc=2'
 expect "test overrides ignored under sudo" "$(SUDO_UID=$uid THROTTLE_TEST=1 THROTTLE_TEST_UID=4242 bash "$helper" --dry-run apply --iface eth0 --down 0 --up 0 --app "heroic:1000:0:all:4:user.slice/user-4242.slice/user@4242.service/x.scope" 2>&1; echo "rc=$?")" $'throttle-helper: bad cgroup path: user.slice/user-4242.slice/user@4242.service/x.scope\nrc=2'
+
+echo "== scripts/lib (pure, no ss/ip/sudo)"
+lib=$root/scripts/lib
+deltas() { # deltas MODE INPUT → ss-deltas.awk output (prev counters go to $tmp/lib.prev)
+  printf '%s\n' "$2" | YT_LABELS=$'legendary\theroic\tHeroic' THROTTLE_SS_FIXTURE=1 \
+    awk -v mode="$1" -v maxgap=900 -v prevout="$tmp/lib.prev" -f "$lib/ss-deltas.awk"
+}
+sock=$'0 0 10.0.0.2:1 1.2.3.4:443 users:(("legendary",pid=1,fd=3)) ino:7 cgroup:/u <->\n\t cubic bytes_acked:300 bytes_received:2100'
+lo=$'0 0 127.0.0.1:1 127.0.0.1:2 users:(("legendary",pid=1,fd=3)) ino:8 cgroup:/u <->\n\t cubic bytes_acked:5 bytes_received:5'
+in2=$'#now 2000000000 eth0 5000 700\n#prev 1000000000 eth0 1000 200\n7 100 100\n#cur\n'"$sock"$'\n'"$lo"
+expect "ss-deltas rates: per-app bytes/s + interface" "$(deltas rates "$in2" | jq -c '[.interval, .iface.down, .iface.up, (.apps[] | [.name, .key, .down, .up, .conns])]')" \
+  '[1.00,4000,500,["Heroic","heroic",2000,200,1]]'
+expect "ss-deltas keeps this sample's counters, skips loopback" "$(cat "$tmp/lib.prev")" "7 2100 300"
+expect "ss-deltas bytes: TSV for stats" "$(deltas bytes "$in2")" $'#iface\t4000\t500\t1\nHeroic\t2000\t200'
+expect "ss-deltas bytes: no baseline → nothing" "$(deltas bytes $'#now 1 eth0 1 1\n#cur\n'"$sock")" ""
+expect "ss-deltas: interface change → no iface rate" "$(deltas rates "${in2/\#prev 1000000000 eth0/#prev 1000000000 wlan0}" | jq -c .iface)" "null"
+defaults=$(sed -e '/^\s*\/\//d' -e 's/^var CONFIG = //' -e 's/};\s*$/}/' "$root/defaults.js")  # as backend.sh defaults_json
+expect "normalize.jq clamps + drops bad apps" "$(jq -c -L "$lib" --argjson d "$defaults" \
+  'include "normalize"; normalize($d) | [.downMbit, .units, .keepDays, (.apps | keys)]' <<<'{"downMbit":99999,"units":"x","keepDays":0,"apps":{"Bad":{"procs":["a"]},"ok":{"procs":["bash"]}}}')" \
+  '[10000,"mbit",1,["heroic","steam"]]'
+expect "stats-add.jq adds a sample and prunes" "$(jq -c --arg day 2026-10-25 --arg cutoff 2026-10-01 --arg d $'#iface\t10\t20\t1\nHeroic\t5\t6' -f "$lib/stats-add.jq" <<<'{"v":1,"days":{"2026-09-01":{"rx":1,"tx":1,"apps":{}},"2026-10-25":{"rx":1,"tx":2,"apps":{"Heroic":[1,1]}}}}')" \
+  '{"v":1,"days":{"2026-10-25":{"rx":11,"tx":22,"apps":{"Heroic":[6,7]}}}}'
+
+echo "== shellcheck"
+if command -v shellcheck >/dev/null; then
+  # The privileged helper is frozen (re-installing it needs sudo); its one
+  # remaining note (SC2015, an intended `a && b || c`) is accepted there.
+  out=$(shellcheck -x "$root"/scripts/*.sh "$root"/tools/*.sh "$here"/*.sh 2>&1 && shellcheck -e SC2015 "$root/helper/throttle-helper" 2>&1); rc=$?
+  expect "shellcheck clean" "rc=$rc" "rc=0"; [[ $rc == 0 ]] || echo "$out"
+else
+  echo "SKIP  shellcheck not installed"
+fi
 
 echo "== vendored omarchy-yoyo-ui"
 out=$(bash "$root/tools/sync-ui.sh" --check 2>&1); rc=$?
