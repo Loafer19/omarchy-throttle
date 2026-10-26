@@ -27,7 +27,9 @@ RUN=${THROTTLE_RUN_DIR:-${XDG_RUNTIME_DIR:-/tmp}/yoyo-throttle}
 CG_ROOT=${THROTTLE_CGROUP_ROOT:-/sys/fs/cgroup}
 UID_=${THROTTLE_UID:-$(id -u)}
 USER_TREE="user.slice/user-$UID_.slice/user@$UID_.service/"
-IFB=ifb-throttle
+IFB="ifb-throttle"
+LIB=$here/lib
+readonly LIVE_NONE='{"ifb":false,"egress":false}'  # live_state with nothing shaped
 
 # Which processes belong to which app comes from the settings: the presets
 # (Heroic incl. its legendary/gogdl/nile download helpers, Steam) are fixed in
@@ -40,76 +42,46 @@ PROCS_OVERRIDE=$(jq -nc --arg h "${THROTTLE_PROCS_HEROIC:-}" --arg s "${THROTTLE
 
 mkdir -p "$RUN" 2>/dev/null
 
+json_error() { jq -nc --arg e "$1" '{error: $e}'; }
+jbool() { if (( $1 )); then echo true; else echo false; fi; }
+
 defaults_json() {
   sed -e '/^\s*\/\//d' -e 's/^var CONFIG = //' -e 's/};\s*$/}/' "$here/../defaults.js"
 }
 
 # Normalize/clamp so the helper never sees a value it would reject. Unknown,
 # malformed or over-limit custom apps are dropped; `"apps": {"key": null}` in a
-# patch removes a custom app.
-NORMALIZE='
-  def mbit: (tonumber? // 0) | floor | if . < 0 then 0 elif . > 10000 then 10000 else . end;
-  def mib: (tonumber? // 4) | floor | if . < 1 then 1 elif . > 1024 then 1024 else . end;
-  def app($d): {
-    downMbit: ((.downMbit // $d.downMbit) | mbit),
-    upMbit: ((.upMbit // $d.upMbit) | mbit),
-    gamesSafe: (if (.gamesSafe | type) == "boolean" then .gamesSafe else $d.gamesSafe end),
-    bulkMiB: ((.bulkMiB // $d.bulkMiB) | mib)
-  };
-  def dedupe: reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end);
-  def oneof($opts; $dflt): . as $v | if (type == "string") and any($opts[]; . == $v) then . else $dflt end;
-  def steps($dflt): (if type == "array" then map(tonumber? // empty | floor | select(. >= 1 and . <= 10000)) | dedupe | sort | .[0:6] else [] end)
-    | if length > 0 then . else $dflt end;
-  def days($dflt): (tonumber? // $dflt) | floor | if . < 1 then 1 elif . > 365 then 365 else . end;
-  . as $s | $defaults as $d |
-  (if ($s.apps | type) == "object" then $s.apps else {} end) as $sa |
-  ($d.presets | to_entries | map(.key as $k | .value as $p |
-    {key: $k, value: ((if ($sa[$k] | type) == "object" then $sa[$k] else {} end) | app($d.apps[$k]))
-      + {label: $p.label, procs: $p.procs, preset: true}})) as $pre |
-  ($sa | to_entries
-    | map(select((.key | test("^[a-z][a-z0-9-]{0,15}$")) and ($d.presets[.key] == null) and ((.value | type) == "object")))
-    | map(.key as $k | .value as $v
-        | (if ($v.procs | type) == "array" then $v.procs else [] end)
-          | map(select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9 ._+:-]{0,14}$")) | select(. as $p | $d.denyProcs | any(.[]; . == $p) | not))
-          | dedupe | .[0:$d.limits.maxProcs] as $procs
-        | select($procs | length > 0)
-        | {key: $k, value: ($v | app($d.custom)) + {
-            label: ((if ($v.label | type) == "string" then $v.label else "" end) | gsub("[[:cntrl:]]"; "") | sub("^\\s+"; "") | sub("\\s+$"; "") | .[0:32]
-              | if . == "" then $procs[0] else . end),
-            procs: $procs, preset: false}})
-    | .[0:($d.limits.maxApps - ($pre | length))]) as $custom |
-  {
-    enabled: (if ($s.enabled | type) == "boolean" then $s.enabled else $d.enabled end),
-    downMbit: (($s.downMbit // $d.downMbit) | mbit),
-    upMbit: (($s.upMbit // $d.upMbit) | mbit),
-    units: ($s.units | oneof(["mbit", "mbyte"]; $d.units)),
-    barWidget: ($s.barWidget | oneof(["icon", "dot", "rate"]; $d.barWidget)),
-    steps: ($s.steps | steps($d.steps)),
-    keepDays: (($s.keepDays // $d.keepDays) | days($d.keepDays)),
-    apps: (($pre + $custom) | from_entries)
-  }'
+# patch removes a custom app (rules: scripts/lib/normalize.jq).
+# normalize [PATCH]: stdin settings (deep-merged with PATCH) → normalized JSON.
+normalize() {
+  # shellcheck disable=SC2016  # jq variables, not shell ones
+  jq -c -L "$LIB" --argjson defaults "$(defaults_json)" --argjson p "${1:-null}" \
+    'include "normalize"; (if $p == null then . else . * $p end) | normalize($defaults)'
+}
 
 settings_get() {
   local raw='{}'
   [[ -s $SETTINGS ]] && raw=$(cat "$SETTINGS")
-  jq -c --argjson defaults "$(defaults_json)" "$NORMALIZE" <<<"$raw" 2>/dev/null ||
-    jq -c --argjson defaults "$(defaults_json)" "$NORMALIZE" <<<'{}'
+  normalize <<<"$raw" 2>/dev/null || normalize <<<'{}'
 }
 
 settings_set() {
   local patch=${1:-}
-  jq -e 'type == "object"' >/dev/null 2>&1 <<<"$patch" || { echo '{"error":"patch must be a JSON object"}'; return 2; }
+  jq -e 'type == "object"' >/dev/null 2>&1 <<<"$patch" || { json_error "patch must be a JSON object"; return 2; }
   mkdir -p "$STATE_ROOT"
   local next
-  next=$(jq -c --argjson defaults "$(defaults_json)" --argjson p "$patch" ". * \$p | $NORMALIZE" <<<"$(settings_get)") || return 1
+  next=$(normalize "$patch" <<<"$(settings_get)") || return 1
   printf '%s\n' "$next" > "$SETTINGS.tmp" && mv -f "$SETTINGS.tmp" "$SETTINGS"
   printf '%s\n' "$next"
 }
 
+# route_dev -4|-6 ADDR → the device the kernel routes ADDR through
+route_dev() { ip -o "$1" route get "$2" 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p'; }
+
 default_iface() {
   local dev
-  dev=$(ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p')
-  [[ -z $dev ]] && dev=$(ip -o -6 route get 2606:4700:4700::1111 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p')
+  dev=$(route_dev -4 1.1.1.1)
+  [[ -z $dev ]] && dev=$(route_dev -6 2606:4700:4700::1111)
   printf '%s' "$dev"
 }
 
@@ -165,9 +137,34 @@ app_table() {
        (($ov[$k] // .value.procs) | join(","))] | @tsv' <<<"$1"
 }
 
+# collect_cgroups KEY "proc,proc" → CG_RUNNING (true/false), CG_OK, CG_REFUSED
+# (arrays) and CG_SHARED ("comm,comm,") from app_cgroups.
+collect_cgroups() {
+  local kind path rest
+  CG_RUNNING=false; CG_OK=(); CG_REFUSED=(); CG_SHARED=""
+  while read -r kind path rest; do
+    [[ -n $kind ]] || continue
+    CG_RUNNING=true
+    case $kind in
+      ok) CG_OK+=("$path") ;;
+      refused) CG_REFUSED+=("$path:$rest") ;;
+      shared) CG_SHARED+="$rest," ;;
+    esac
+  done < <(app_cgroups "$1" "$2")
+}
+
+# Discovery TSV (key, running, cgroups, refused, shared) → the status "apps" JSON.
+disco_json() {
+  jq -Rsc 'split("\n") | map(select(. != "") | split("\t")
+    | {key: .[0], running: (.[1] == "true"),
+       cgroups: (.[2] | split("\u001f") | map(select(. != ""))),
+       refused: (.[3] | split("\u001f") | map(select(. != ""))),
+       shared: (.[4] | split(",") | map(select(. != "")) | unique)})'
+}
+
 # Builds the helper argv into PLAN (array) and discovery info into DISCO (JSON).
 build_plan() {
-  local s iface enabled down up key label ad au mode mib procs kind path rest
+  local s iface enabled down up key ad au mode mib procs p
   s=$(settings_get)
   iface=${THROTTLE_IFACE:-$(default_iface)}
   read -r enabled down up < <(jq -r '[.enabled, .downMbit * 1000, .upMbit * 1000] | @tsv' <<<"$s")
@@ -175,32 +172,17 @@ build_plan() {
   local args=() any=0 disco=""
   (( down > 0 || up > 0 )) && any=1
   load_procs
-  while IFS=$'\t' read -r key label ad au mode mib procs; do
+  while IFS=$'\t' read -r key _ ad au mode mib procs; do
     [[ -n $key ]] || continue
-    local running=false ok=() refused=() shared=""
-    while read -r kind path rest; do
-      [[ -n $kind ]] || continue
-      running=true
-      case $kind in
-        ok) ok+=("$path") ;;
-        refused) refused+=("$path:$rest") ;;
-        shared) shared+="$rest," ;;
-      esac
-    done < <(app_cgroups "$key" "$procs")
-    if (( ad > 0 || au > 0 )) && (( ${#ok[@]} )); then
-      local joined; joined=$(IFS=,; echo "${ok[*]}")
-      args+=(--app "$key:$ad:$au:$mode:$mib:$joined")
+    collect_cgroups "$key" "$procs"
+    if (( ad > 0 || au > 0 )) && (( ${#CG_OK[@]} )); then
+      args+=(--app "$key:$ad:$au:$mode:$mib:$(IFS=,; echo "${CG_OK[*]}")")
       any=1
-      local p
-      for p in "${ok[@]}"; do FPX+="$p@$(stat -c %i "$CG_ROOT/$p" 2>/dev/null);"; done
+      for p in "${CG_OK[@]}"; do FPX+="$p@$(stat -c %i "$CG_ROOT/$p" 2>/dev/null);"; done
     fi
-    disco+="$key"$'\t'"$running"$'\t'"$(IFS=$'\x1f'; echo "${ok[*]}")"$'\t'"$(IFS=$'\x1f'; echo "${refused[*]}")"$'\t'"${shared%,}"$'\n'
+    disco+="$key"$'\t'"$CG_RUNNING"$'\t'"$(IFS=$'\x1f'; echo "${CG_OK[*]}")"$'\t'"$(IFS=$'\x1f'; echo "${CG_REFUSED[*]}")"$'\t'"${CG_SHARED%,}"$'\n'
   done < <(app_table "$s")
-  DISCO=$(printf '%s' "$disco" | jq -Rsc 'split("\n") | map(select(. != "") | split("\t")
-    | {key: .[0], running: (.[1] == "true"),
-       cgroups: (.[2] | split("\u001f") | map(select(. != ""))),
-       refused: (.[3] | split("\u001f") | map(select(. != ""))),
-       shared: (.[4] | split(",") | map(select(. != "")) | unique)})')
+  DISCO=$(printf '%s' "$disco" | disco_json)
   IFACE=$iface
   if [[ $enabled != true || $any == 0 || -z $iface ]]; then
     PLAN=(clear)
@@ -221,7 +203,7 @@ live_state() {
 # Does the kernel still match what we applied last (e.g. after resume/reboot)?
 live_matches() {
   local live=$1 want_down=0 want_up=0 a
-  [[ ${PLAN[0]} == apply ]] || { [[ $live == '{"ifb":false,"egress":false}' ]]; return; }
+  [[ ${PLAN[0]} == apply ]] || { [[ $live == "$LIVE_NONE" ]]; return; }
   (( PLAN[4] > 0 )) && want_down=1
   (( PLAN[6] > 0 )) && want_up=1
   for a in "${PLAN[@]}"; do
@@ -230,7 +212,7 @@ live_matches() {
     (( d > 0 )) && want_down=1
     (( u > 0 )) && want_up=1
   done
-  [[ $live == "{\"ifb\":$([[ $want_down == 1 ]] && echo true || echo false),\"egress\":$([[ $want_up == 1 ]] && echo true || echo false)}" ]]
+  [[ $live == "{\"ifb\":$(jbool $want_down),\"egress\":$(jbool $want_up)}" ]]
 }
 
 helper_state() {
@@ -252,7 +234,7 @@ tick() {
   live=$(live_state "$IFACE")
   if [[ $hs == installed ]]; then
     if (( force )) || [[ $fp != "$prev" ]] || ! live_matches "$live"; then
-      if [[ ${PLAN[0]} == clear && -z $prev && $live == '{"ifb":false,"egress":false}' ]] && (( ! force )); then
+      if [[ ${PLAN[0]} == clear && -z $prev && $live == "$LIVE_NONE" ]] && (( ! force )); then
         echo "$fp" > "$RUN/applied"
       elif called=true; result=$(run_helper "${PLAN[@]}"); then
         echo "$fp" > "$RUN/applied"; rm -f "$RUN/error"
@@ -274,10 +256,10 @@ tick() {
 }
 
 cmd_clear() {
-  [[ $(helper_state) == installed ]] || { echo '{"error":"helper not installed"}'; return 1; }
+  [[ $(helper_state) == installed ]] || { json_error "helper not installed"; return 1; }
   local out
   if out=$(run_helper clear); then rm -f "$RUN/applied" "$RUN/error"; echo '{"ok":true}'
-  else jq -nc --arg e "$out" '{error: $e}'; return 1; fi
+  else json_error "$out"; return 1; fi
 }
 
 # ---------------------------------------------------------------- traffic ---
@@ -314,92 +296,16 @@ ss_deltas() {
     [[ -f $prev_file ]] && cat "$prev_file"
     printf '#cur\n'
     printf '%s\n' "$sample"
-  } | YT_LABELS=$(label_table) awk -v mode="$mode" -v maxgap="${THROTTLE_STATS_MAXGAP_S:-900}" -v prevout="$prev_file.new" '
-    # comm is cut at 15 chars ("telegram-deskto"); show the executable name
-    # instead when it starts with the same text ("telegram-desktop").
-    function fullname(n, p,   f, line) {
-      if (length(n) < 15 || p == "" || ENVIRON["THROTTLE_SS_FIXTURE"] != "") return n
-      f = "/proc/" p "/cmdline"
-      RS_save = RS; RS = "\0"
-      if ((getline line < f) > 0) { sub(/.*\//, "", line) }
-      close(f); RS = RS_save
-      if (line != "" && line ~ /^[A-Za-z0-9][A-Za-z0-9 ._+:-]*$/ && length(line) <= 32 && tolower(substr(line, 1, 15)) == tolower(n)) return line
-      return n
-    }
-    function jstr(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return "\"" s "\"" }
-    BEGIN {
-      n = split(ENVIRON["YT_LABELS"], L, "\n")
-      for (i = 1; i <= n; i++) if (split(L[i], f, "\t") == 3) { lkey[f[1]] = f[2]; llab[f[1]] = f[3] }
-      section = "head"
-    }
-    /^#now / { now = $2; iface = $3; rx = $4; tx = $5; next }
-    /^#prev / { pnow = $2; piface = $3; prx = $4; ptx = $5; section = "prev"; next }
-    /^#cur/ { section = "cur"; next }
-    section == "prev" { pin[$1] = $2; pout[$1] = $3; next }
-    section != "cur" { next }
-    /^[^ \t]/ {
-      ino = ""; name = ""; cg = ""; own = 1; pid = ""
-      if ($4 ~ /^(127\.|\[::1\]|\[::ffff:127\.)/) next
-      if (match($0, /ino:[0-9]+/)) ino = substr($0, RSTART + 4, RLENGTH - 4)
-      if (match($0, /users:\(\("[^"]+"/)) name = substr($0, RSTART + 9, RLENGTH - 10)
-      if (match($0, /",pid=[0-9]+/)) pid = substr($0, RSTART + 6, RLENGTH - 6)
-      if (match($0, /cgroup:[^ ]+/)) cg = substr($0, RSTART + 7, RLENGTH - 7)
-      if (name == "") {
-        # Not our process (root daemon etc.): label by its systemd unit.
-        own = 0
-        unit = cg; sub(/.*\//, "", unit); sub(/\.(service|scope)$/, "", unit)
-        name = (unit == "" ? "other" : unit)
-      }
-      next
-    }
-    {
-      if (ino == "") next
-      bin = 0; bout = 0
-      if (match($0, /bytes_received:[0-9]+/)) bin = substr($0, RSTART + 15, RLENGTH - 15)
-      if (match($0, /bytes_acked:[0-9]+/)) bout = substr($0, RSTART + 12, RLENGTH - 12)
-      print ino, bin, bout > prevout
-      g = (own && (name in llab)) ? llab[name] : name
-      if (!(g in conns)) { gkey[g] = (own && (name in lkey)) ? lkey[name] : ""; gown[g] = own; gproc[g] = name; gfull[g] = fullname(name, pid) }
-      if (pnow != "") {
-        din = (ino in pin) ? bin - pin[ino] : bin
-        dout = (ino in pout) ? bout - pout[ino] : bout
-        if (din < 0) din = 0; if (dout < 0) dout = 0
-        gin[g] += din; gout[g] += dout
-      }
-      conns[g]++
-      ino = ""
-    }
-    END {
-      close(prevout)
-      dt = (pnow != "") ? (now - pnow) / 1e9 : 0
-      ok = (dt > 0 && piface == iface && iface != "-" && rx >= prx && tx >= ptx)
-      if (mode == "bytes") {
-        # No previous sample, or it is so old (shell was off, suspend) that the
-        # gap cannot be attributed to a day: this sample only sets the baseline.
-        if (pnow == "" || dt > maxgap) exit
-        printf "#iface\t%d\t%d\t%d\n", (ok ? rx - prx : 0), (ok ? tx - ptx : 0), ok
-        for (g in conns) if (gin[g] + gout[g] > 0) printf "%s\t%d\t%d\n", g, gin[g], gout[g]
-        exit
-      }
-      printf "{\"interval\":%.2f,", dt
-      if (ok) printf "\"iface\":{\"name\":%s,\"down\":%d,\"up\":%d},", jstr(iface), (rx - prx) / dt, (tx - ptx) / dt
-      else printf "\"iface\":null,"
-      printf "\"apps\":["
-      first = 1
-      for (g in conns) {
-        d = (dt > 0) ? gin[g] / dt : 0; u = (dt > 0) ? gout[g] / dt : 0
-        printf "%s{\"name\":%s,\"key\":%s,\"proc\":%s,\"full\":%s,\"own\":%s,\"down\":%d,\"up\":%d,\"conns\":%d}", (first ? "" : ","),
-          jstr(g), jstr(gkey[g]), jstr(gproc[g]), jstr(gfull[g]), (gown[g] ? "true" : "false"), d, u, conns[g]
-        first = 0
-      }
-      printf "]}\n"
-    }'
+  } | YT_LABELS=$(label_table) awk -v mode="$mode" -v maxgap="${THROTTLE_STATS_MAXGAP_S:-900}" -v prevout="$prev_file.new" \
+    -f "$LIB/ss-deltas.awk"
+  local rc=$?
   { printf '#prev %s %s %s %s\n' "$now" "$iface" "$rx" "$tx"; cat "$prev_file.new" 2>/dev/null; } > "$prev_file"
   rm -f "$prev_file.new"
+  return "$rc"
 }
 
 traffic() {
-  ss_deltas "$RUN/ss.prev" rates > "$RUN/traffic.json.tmp"
+  ss_deltas "$RUN/ss.prev" rates > "$RUN/traffic.json.tmp" || return 1
   jq -c '.apps |= sort_by(-(.down + .up), .name)' "$RUN/traffic.json.tmp"
 }
 
@@ -415,9 +321,11 @@ STATS_SYNC_S=${THROTTLE_STATS_SYNC_S:-300}
 
 stats_today() { printf '%s' "${THROTTLE_TODAY:-$(date +%F)}"; }
 
+stats_valid() { [[ -s $1 ]] && jq -e '.days | type == "object"' "$1" >/dev/null 2>&1; }
+
 stats_load() {
-  [[ -s $STATS_LIVE ]] && jq -e '.days | type == "object"' "$STATS_LIVE" >/dev/null 2>&1 && return
-  if [[ -s $STATS ]] && jq -e '.days | type == "object"' "$STATS" >/dev/null 2>&1; then cp -f "$STATS" "$STATS_LIVE"
+  stats_valid "$STATS_LIVE" && return
+  if stats_valid "$STATS"; then cp -f "$STATS" "$STATS_LIVE"
   else echo '{"v":1,"days":{}}' > "$STATS_LIVE"; fi
 }
 
@@ -433,24 +341,12 @@ stats_sample() {
   flock -w 5 9 || return 0
   stats_load
   local deltas today cutoff keep
-  deltas=$(ss_deltas "$RUN/stats.prev" bytes)
+  deltas=$(ss_deltas "$RUN/stats.prev" bytes) || deltas=""  # bad sample: count nothing
   today=$(stats_today)
-  keep=$(settings_get | jq -r ".keepDays // $(defaults_json | jq -r .keepDays)")
+  keep=$(settings_get | jq -r .keepDays)  # normalized: always set, 1..365
   cutoff=$(date -d "$today -$keep days" +%F)
   if [[ -n $deltas ]]; then
-    jq -c --arg day "$today" --arg cutoff "$cutoff" --arg d "$deltas" '
-      ($d | split("\n") | map(select(. != "") | split("\t"))) as $rows
-      | ($rows | map(select(.[0] == "#iface")) | .[0] // ["#iface", "0", "0"]) as $if
-      | .days[$day] //= {rx: 0, tx: 0, apps: {}}
-      | .days[$day].rx += ($if[1] | tonumber) | .days[$day].tx += ($if[2] | tonumber)
-      | reduce ($rows[] | select(.[0] != "#iface")) as $r (.;
-          .days[$day].apps[$r[0]] = [((.days[$day].apps[$r[0]][0] // 0) + ($r[1] | tonumber)),
-                                     ((.days[$day].apps[$r[0]][1] // 0) + ($r[2] | tonumber))])
-      | .days[$day].apps |= (if length > 40 then
-          (to_entries | sort_by(-(.value[0] + .value[1]))) as $e
-          | ($e[:39] | from_entries) + {"Other apps": ($e[39:] | reduce .[] as $x ([0, 0]; [.[0] + $x.value[0], .[1] + $x.value[1]]))}
-        else . end)
-      | .days |= with_entries(select(.key >= $cutoff))' "$STATS_LIVE" > "$STATS_LIVE.tmp" &&
+    jq -c --arg day "$today" --arg cutoff "$cutoff" --arg d "$deltas" -f "$LIB/stats-add.jq" "$STATS_LIVE" > "$STATS_LIVE.tmp" &&
       mv -f "$STATS_LIVE.tmp" "$STATS_LIVE"
   fi
   local last; last=$(cat "$RUN/stats.synced" 2>/dev/null || echo 0)
