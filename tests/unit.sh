@@ -18,6 +18,7 @@ expect_has() { if [[ $2 == *"$3"* ]]; then ok "$1"; else no "$1" "missing: $3"; 
 expect_match() { if [[ $2 =~ $3 ]]; then ok "$1"; else no "$1" "got: $2 | want ~ $3"; fi; }
 cleanup() {
   systemctl --user stop yt-unit-heroic.scope yt-unit-torrent.scope >/dev/null 2>&1
+  pkill -x -u "$(id -u)" 'yt-heroic|yt-torrent' >/dev/null 2>&1
   rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -58,8 +59,9 @@ B settings-set '{"steps":"10,25","keepDays":"x"}' >/dev/null
 expect "wrong types → defaults" "$(B settings-get | jq -c '[.steps,.keepDays]')" '[[10,25,50,100],35]'
 
 echo "== plan / app discovery"
+# Without a user systemd (CI) the fake app runs in the test's own cgroup.
 cp /usr/bin/sleep "$tmp/yt-heroic"
-systemd-run --user --quiet --collect --scope --unit=yt-unit-heroic "$tmp/yt-heroic" 300 >/dev/null 2>&1 &
+{ systemd-run --user --quiet --collect --scope --unit=yt-unit-heroic "$tmp/yt-heroic" 300 || exec "$tmp/yt-heroic" 300; } >/dev/null 2>&1 &
 for _ in $(seq 50); do pgrep -x -u "$uid" yt-heroic >/dev/null && break; sleep 0.1; done
 cg=$(sed -n 's|^0::/||p' "/proc/$(pgrep -x -u "$uid" yt-heroic | head -1)/cgroup")
 B settings-set '{"downMbit":0,"upMbit":0,"apps":{"heroic":{"downMbit":10,"upMbit":2,"gamesSafe":false}}}' >/dev/null
@@ -79,7 +81,7 @@ B settings-set '{"downMbit":25}' >/dev/null
 expect "global only" "$(B plan | head -1)" "apply --iface eth-test --down 25000 --up 0 "
 
 cp /usr/bin/sleep "$tmp/yt-torrent"
-systemd-run --user --quiet --collect --scope --unit=yt-unit-torrent "$tmp/yt-torrent" 300 >/dev/null 2>&1 &
+{ systemd-run --user --quiet --collect --scope --unit=yt-unit-torrent "$tmp/yt-torrent" 300 || exec "$tmp/yt-torrent" 300; } >/dev/null 2>&1 &
 for _ in $(seq 50); do pgrep -x -u "$uid" yt-torrent >/dev/null && break; sleep 0.1; done
 cgt=$(sed -n 's|^0::/||p' "/proc/$(pgrep -x -u "$uid" yt-torrent | head -1)/cgroup")
 B settings-set '{"downMbit":0,"apps":{"torrent":{"label":"Torrent","procs":["yt-torrent"],"downMbit":12,"upMbit":1}}}' >/dev/null
@@ -118,7 +120,7 @@ expect "helper failure is reported" "$(jq -c '[.applied,.error]' <<<"$s3")" '[fa
 rm -f "$tmp/fail"
 s4=$(B tick)
 expect "recovers on the next tick" "$(jq -c '[.applied,.error]' <<<"$s4")" '[true,""]'
-systemctl --user stop yt-unit-heroic.scope >/dev/null 2>&1; sleep 0.3
+systemctl --user stop yt-unit-heroic.scope >/dev/null 2>&1; pkill -x -u "$uid" yt-heroic >/dev/null 2>&1; sleep 0.3
 B tick >/dev/null
 expect_match "app exit changes the plan" "$(tail -1 "$tmp/calls")" "^apply --iface eth-test --down 25000 --up 0$"
 unset THROTTLE_HELPER THROTTLE_SUDO THROTTLE_LIVE_FIXTURE

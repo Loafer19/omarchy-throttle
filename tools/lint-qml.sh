@@ -16,7 +16,8 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/qs"
 ln -s "$shell/Commons" "$tmp/qs/Commons"
 ln -s "$shell/Ui" "$tmp/qs/Ui"
-mapfile -t files < <(git ls-files -co --exclude-standard '*.qml' | grep -v '^vendor/')
+# tests/preview/ is the render harness: valid only inside tools/render-previews.sh.
+mapfile -t files < <(git ls-files -co --exclude-standard '*.qml' | grep -v -e '^vendor/' -e '^tests/preview/')
 out=$("$qmllint" -I "$tmp" -I /usr/lib/qt6/qml "${files[@]}" 2>&1) || true
 [[ -z $out ]] && { echo "qmllint: ${#files[@]} files, no warnings"; exit 0; }
 printf '%s\n' "$out"

@@ -175,6 +175,15 @@ bash tests/netns-e2e.sh    # real shaping inside user + net namespaces (slow)
 bash tools/lint-qml.sh     # qmllint over the plugin's QML: no warnings expected
 ```
 
+CI (`.github/workflows/ci.yml`) runs `tools/sync-ui.sh --check`,
+`tests/model.test.js` and `tests/unit.sh` on Ubuntu for every push and pull
+request; the netns end-to-end test stays local.
+
+The screenshots are rendered offscreen with made-up data, never from a real
+session: `tools/render-previews.sh` (needs `qs` and the Omarchy shell) runs the
+real `Panel.qml` / `BarWidget.qml` against `tests/preview/FakeStore.qml`, so no
+interface, app or traffic from your machine ends up in the images.
+
 Keep logic in `model/*.js` with a test next to the others and the QML
 declarative. QML imports the module it needs (`import "model/apps.js" as
 Apps`), not a facade, so qmllint can check every call.
@@ -184,3 +193,7 @@ The theme, chips, action rows, empty states and key hints come from
 `vendor/yoyo-ui/` (pinned in `vendor/yoyo-ui/VERSION`). Don't edit it here:
 change the library, tag it, then `tools/sync-ui.sh <tag>`. `tests/unit.sh`
 fails if the vendored copy was edited by hand.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
