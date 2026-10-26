@@ -27,7 +27,7 @@ Rectangle {
     Text {
       width: parent.width
       wrapMode: Text.WordWrap
-      text: "One-time setup: shaping needs a tiny root helper. Run this once in a terminal:"
+      text: "Shaping needs a tiny root helper. Run this once in a terminal:"
       color: Theme.fg
       font.family: Theme.fontFamily
       font.pixelSize: Theme.caption
@@ -37,16 +37,30 @@ Rectangle {
       width: parent.width
       spacing: Theme.gap
 
-      TextEdit {
+      // The command sits in a code inset; it breaks after "/" rather than
+      // mid-word when the panel is too narrow for one line.
+      Rectangle {
         width: parent.width - copyChip.width - Theme.gap
+        height: commandText.implicitHeight + Style.space(8)
         anchors.verticalCenter: parent.verticalCenter
-        readOnly: true
-        selectByMouse: true
-        wrapMode: TextEdit.WrapAnywhere
-        text: root.command
-        color: Theme.fg
-        font.family: "monospace"
-        font.pixelSize: Theme.caption
+        radius: Style.cornerRadius
+        color: Theme.tint(Theme.background, 0.6)
+
+        TextEdit {
+          id: commandText
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.leftMargin: Style.space(6)
+          anchors.rightMargin: Style.space(6)
+          readOnly: true
+          selectByMouse: true
+          wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
+          text: root.command
+          color: Theme.fg
+          font.family: Theme.fontFamily
+          font.pixelSize: Theme.caption
+        }
       }
 
       HeaderChip {
