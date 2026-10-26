@@ -12,6 +12,7 @@ import "model/stats.js" as Stats
 import "model/views.js" as Views
 import "model/settings.js" as Settings
 import "model/status.js" as Status
+import "model/nav.js" as Nav
 import "vendor/yoyo-ui"
 import "components" as Throttle
 
@@ -58,35 +59,16 @@ Panel {
 
   readonly property var liveSeries: Live.liveSeries(store && store.history ? store.history : emptyList, 4, units)
   readonly property var statsSummary: Stats.statsSummary(store ? store.stats : null, trafficSub === "live" ? "today" : trafficSub)
-  readonly property real statsPeak: {
-    var m = 1
-    for (var i = 0; i < statsSummary.apps.length; i++) m = Math.max(m, statsSummary.apps[i].down + statsSummary.apps[i].up)
-    return m
-  }
+  readonly property real statsPeak: Stats.peakOf(statsSummary)
 
-  readonly property var activeRows: {
-    if (activeTab === "limits") {
-      if (limitsSub === "connection") return Views.connectionRows(cfg, status)
-      if (limitsSub === "add") return Views.addRows(cfg, traffic)
-      if (detailKey !== "") {
-        var d = Views.detailRows(cfg, status, traffic, detailKey, limiting, units)
-        if (d.length) return d
-      }
-      return Views.appListRows(cfg, status, traffic, limiting, units)
-    }
-    if (activeTab === "traffic") {
-      if (trafficSub === "live") return Views.liveRows(cfg, traffic, store && store.history ? store.history : emptyList)
-      return Views.historyRows(cfg, statsSummary, !!(store && store.stats))
-    }
-    return Settings.settingsRows(cfg, status, !needsSetup)
-  }
+  readonly property var activeRows: Views.rowsFor({
+    tab: activeTab, limitsSub: limitsSub, trafficSub: trafficSub, detailKey: detailKey,
+    cfg: cfg, status: status, traffic: traffic, history: store && store.history ? store.history : emptyList,
+    stats: store ? store.stats : null, summary: statsSummary, limiting: limiting, units: units, needsSetup: needsSetup
+  })
   readonly property bool inDetail: activeTab === "limits" && limitsSub === "apps" && detailKey !== "" && activeRows.length > 0 && activeRows[0].kind === "crumb"
 
-  readonly property string subCaption: {
-    if (activeTab === "limits") return Apps.appList(cfg).length + " of " + Apps.MAX_APPS + " apps"
-    if (activeTab === "traffic") return (status && status.iface ? status.iface : "network") + (trafficSub === "live" ? " · every 1.5 s" : "")
-    return ""
-  }
+  readonly property string subCaption: Views.subCaption(activeTab, trafficSub, cfg, status)
 
   function bindStore() {
     if (store) return
@@ -177,7 +159,7 @@ Panel {
     limitsSub = "apps"
     detailKey = key
     // Land on Download (row 2) so h/l sets the cap right away.
-    setRowCursor(Math.max(0, nextSelectable(1, 1)))
+    setRowCursor(Math.max(0, Nav.nextSelectable(activeRows, 1, 1)))
     list.positionViewAtBeginning()
   }
 
@@ -197,50 +179,31 @@ Panel {
   property string focusSection: "rows"
   property int selectedIndex: 0
 
-  function selectable(i) { return Views.selectableRow(activeRows[i]) }
-  function firstSelectable() {
-    for (var i = 0; i < activeRows.length; i++) if (selectable(i)) return i
-    return -1
-  }
-  function nextSelectable(from, dir) {
-    for (var i = from + dir; i >= 0 && i < activeRows.length; i += dir) if (selectable(i)) return i
-    return -1
-  }
-
-  function chipIndexByKey(chips, key) {
-    for (var i = 0; i < chips.length; i++) if (String(chips[i].key) === String(key)) return i
-    return 0
-  }
-
-  function setRowCursor(index) {
+  function setCursor(section, index) {
     cursorActive = true
-    focusSection = "rows"
+    focusSection = section
     selectedIndex = index
   }
-  function setTabsCursor(index) {
-    cursorActive = true
-    focusSection = "tabs"
-    selectedIndex = index
-  }
-  function setFiltersCursor(index) {
-    cursorActive = true
-    focusSection = "filters"
-    selectedIndex = index
+  function setRowCursor(index) { setCursor("rows", index) }
+  function setTabsCursor(index) { setCursor("tabs", index) }
+  function setFiltersCursor(index) { setCursor("filters", index) }
+  // Cursor on the active chip of a chip section.
+  function chipCursor(section) {
+    if (section === "tabs") setTabsCursor(Nav.chipIndex(tabs, activeTab))
+    else setFiltersCursor(Nav.chipIndex(subtabs, activeSub))
   }
 
+  // The first key press only shows the cursor (false); later ones act.
   function ensureCursor() {
     if (cursorActive) return true
-    cursorActive = true
-    var first = firstSelectable()
-    if (first >= 0) { focusSection = "rows"; selectedIndex = first }
-    else { focusSection = "tabs"; selectedIndex = chipIndexByKey(tabs, activeTab) }
+    var first = Nav.firstSelectable(activeRows)
+    if (first >= 0) setRowCursor(first)
+    else chipCursor("tabs")
     return false
   }
 
   function cycleTab(direction) {
-    var n = tabs.length
-    var i = (chipIndexByKey(tabs, activeTab) + direction) % n
-    if (i < 0) i += n
+    var i = Nav.cycleIndex(Nav.chipIndex(tabs, activeTab), direction, tabs.length)
     setTab(tabs[i].key)
     setTabsCursor(i)
   }
@@ -267,42 +230,24 @@ Panel {
 
   function moveCursor(dx, dy) {
     if (!ensureCursor()) return
-    var hasFilters = subtabs.length > 0
     if (dy !== 0) {
-      if (focusSection === "tabs") {
-        if (dy < 0) return
-        if (hasFilters) { setFiltersCursor(chipIndexByKey(subtabs, activeSub)); return }
-        var f = firstSelectable(); if (f >= 0) setRowCursor(f)
-        return
-      }
-      if (focusSection === "filters") {
-        if (dy < 0) { setTabsCursor(chipIndexByKey(tabs, activeTab)); return }
-        var g = firstSelectable(); if (g >= 0) setRowCursor(g)
-        return
-      }
-      var next = nextSelectable(selectedIndex, dy > 0 ? 1 : -1)
-      if (next >= 0) { selectedIndex = next; positionActiveList() }
-      else if (dy < 0) {
-        list.positionViewAtBeginning()
-        if (hasFilters) setFiltersCursor(chipIndexByKey(subtabs, activeSub))
-        else setTabsCursor(chipIndexByKey(tabs, activeTab))
-      }
+      var to = Nav.verticalTarget(focusSection, selectedIndex, activeRows, subtabs.length > 0, dy)
+      if (!to) return
+      if (to.top) list.positionViewAtBeginning()
+      if (to.section !== "rows") chipCursor(to.section)
+      else { setRowCursor(to.index); positionActiveList() }
       return
     }
     if (dx === 0) return
     if (focusSection === "tabs") {
-      var t = Math.max(0, Math.min(tabs.length - 1, selectedIndex + dx))
+      var t = Nav.clampIndex(selectedIndex + dx, tabs.length)
       setTab(tabs[t].key)
       setTabsCursor(t)
-      return
-    }
-    if (focusSection === "filters") {
-      var s = Math.max(0, Math.min(subtabs.length - 1, selectedIndex + dx))
+    } else if (focusSection === "filters") {
+      var s = Nav.clampIndex(selectedIndex + dx, subtabs.length)
       setSub(subtabs[s].key)
       setFiltersCursor(s)
-      return
-    }
-    nudge(dx)
+    } else nudge(dx)
   }
 
   function activateRow(index) {
@@ -311,7 +256,7 @@ Panel {
     setRowCursor(index)
     var item = rowItem(index)
     if (r.kind === "app") openApp(r.app)
-    else if (r.kind === "link") { setSub(r.target); setFiltersCursor(chipIndexByKey(subtabs, r.target)) }
+    else if (r.kind === "link") { setSub(r.target); chipCursor("filters") }
     else if (r.kind === "crumb") goBack()
     else if (r.kind === "hero") { if (item && item.activate) item.activate() }
     else if (r.kind === "rate") nudge(1)
@@ -339,7 +284,7 @@ Panel {
   }
 
   function resetRowCursor() {
-    if (focusSection === "rows") selectedIndex = Math.max(0, firstSelectable())
+    if (focusSection === "rows") selectedIndex = Math.max(0, Nav.firstSelectable(activeRows))
     list.positionViewAtBeginning()
   }
   onActiveTabChanged: { detailKey = ""; resetRowCursor() }
@@ -350,19 +295,11 @@ Panel {
     if (!opened) return
     cursorActive = false
     focusSection = "rows"
-    selectedIndex = Math.max(0, firstSelectable())
+    selectedIndex = Math.max(0, Nav.firstSelectable(activeRows))
     if (store) store.tick(false)
   }
 
-  readonly property var keyHints: {
-    if (focusSection === "filters" && cursorActive) return [["h l", activeTab === "traffic" ? "range" : "sub-tabs"], ["j", "rows"], ["Tab", "tabs"], ["p", "pause"]]
-    if (inDetail) return [["Esc", "back"], ["j k", "rows"], ["h l", "change"], ["Enter", "toggle"], ["p", "pause"]]
-    if (activeTab === "settings") return [["Tab", "tabs"], ["j k", "rows"], ["h l", "change"], ["Enter", "next"], ["p", "pause"]]
-    if (activeTab === "traffic") return [["Tab", "tabs"], ["h l", "range"], ["j k", "rows"], ["Enter", "open · add"], ["p", "pause"]]
-    if (limitsSub === "connection") return [["Tab", "tabs"], ["j k", "rows"], ["h l", "change"], ["p", "pause"]]
-    if (limitsSub === "add") return [["Tab", "tabs"], ["j k", "rows"], ["Enter", "add"], ["p", "pause"]]
-    return [["Tab", "tabs"], ["h l", "sub-tabs"], ["j k", "rows"], ["Enter", "open"], ["p", "pause"]]
-  }
+  readonly property var keyHints: Nav.keyHints({ section: focusSection, cursorActive: cursorActive, inDetail: inDetail, tab: activeTab, limitsSub: limitsSub })
 
   KeyboardPanel {
     id: panel
@@ -398,137 +335,37 @@ Panel {
           cursorIndex: root.cursorActive && root.focusSection === "tabs" ? root.selectedIndex : -1
           onSelected: function(key) {
             root.setTab(key)
-            root.setTabsCursor(root.chipIndexByKey(root.tabs, key))
+            root.setTabsCursor(Nav.chipIndex(root.tabs, key))
           }
           onChipHovered: function(index) { root.setTabsCursor(index) }
         }
 
         PanelSeparator { foreground: Theme.fg }
 
-        Item {
-          width: parent.width
-          height: Style.space(24)
-
-          Text {
-            anchors.left: parent.left
-            anchors.leftMargin: Theme.edge
-            anchors.right: onChip.left
-            anchors.rightMargin: Theme.gap
-            anchors.verticalCenter: parent.verticalCenter
-            elide: Text.ElideRight
-            textFormat: Text.PlainText
-            text: Status.statusLine(root.status, root.cfg)
-            color: root.status && root.status.error ? Theme.urgent : (root.limiting ? Theme.fg : Theme.dim)
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.caption
-          }
-
-          HeaderChip {
-            id: onChip
-            anchors.right: parent.right
-            anchors.rightMargin: Theme.edge
-            anchors.verticalCenter: parent.verticalCenter
-            text: root.enabledOn ? "On" : "Paused"
-            on: root.enabledOn
-            enabled: !root.needsSetup
-            tooltipText: root.enabledOn ? "Pause every limit (p) — settings are kept" : "Resume limits (p)"
-            onClicked: root.toggleEnabled()
-          }
+        Throttle.StatusHeader {
+          text: Status.statusLine(root.status, root.cfg)
+          textColor: root.status && root.status.error ? Theme.urgent : (root.limiting ? Theme.fg : Theme.dim)
+          on: root.enabledOn
+          canToggle: !root.needsSetup
+          onToggleRequested: root.toggleEnabled()
         }
 
-        // One-time setup card: the helper that touches tc/nft needs root once.
-        Rectangle {
-          width: parent.width
+        Throttle.SetupCard {
           visible: root.needsSetup
-          height: visible ? setupCol.implicitHeight + Style.space(16) : 0
-          radius: Style.cornerRadius
-          color: Theme.tint(Theme.accent, 0.12)
-          border.width: Style.space(1)
-          border.color: Theme.tint(Theme.accent, 0.4)
-
-          Column {
-            id: setupCol
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.margins: Style.space(8)
-            spacing: Style.space(6)
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: "One-time setup: shaping needs a tiny root helper. Run this once in a terminal:"
-              color: Theme.fg
-              font.family: Theme.fontFamily
-              font.pixelSize: Theme.caption
-            }
-
-            Row {
-              width: parent.width
-              spacing: Theme.gap
-
-              TextEdit {
-                width: parent.width - copyChip.width - Theme.gap
-                anchors.verticalCenter: parent.verticalCenter
-                readOnly: true
-                selectByMouse: true
-                wrapMode: TextEdit.WrapAnywhere
-                text: root.store ? root.store.installCommand : ""
-                color: Theme.fg
-                font.family: "monospace"
-                font.pixelSize: Theme.caption
-              }
-
-              HeaderChip {
-                id: copyChip
-                anchors.verticalCenter: parent.verticalCenter
-                text: copied.running ? "Copied" : "Copy"
-                tooltipText: "Copy the command to the clipboard"
-                onClicked: {
-                  if (root.store) root.store.copyInstallCommand()
-                  copied.restart()
-                }
-                Timer { id: copied; interval: 1500 }
-              }
-            }
-          }
+          command: root.store ? root.store.installCommand : ""
+          onCopyRequested: if (root.store) root.store.copyInstallCommand()
         }
 
-        // Second level: sub-tabs (the "filters" cursor section) and a caption.
-        Item {
-          width: parent.width
-          visible: root.subtabs.length > 0
-          height: visible ? Style.space(24) : 0
-
-          ChipRow {
-            id: subChips
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            compact: true
-            chips: root.subtabs
-            selectedKey: root.activeSub
-            cursorActive: root.cursorActive && root.focusSection === "filters"
-            cursorIndex: root.cursorActive && root.focusSection === "filters" ? root.selectedIndex : -1
-            onSelected: function(key) {
-              root.setSub(key)
-              root.setFiltersCursor(root.chipIndexByKey(root.subtabs, key))
-            }
-            onChipHovered: function(index) { root.setFiltersCursor(index) }
+        Throttle.SubTabBar {
+          chips: root.subtabs
+          selectedKey: root.activeSub
+          cursorIndex: root.cursorActive && root.focusSection === "filters" ? root.selectedIndex : -1
+          caption: root.subCaption
+          onSelected: function(key) {
+            root.setSub(key)
+            root.setFiltersCursor(Nav.chipIndex(root.subtabs, key))
           }
-
-          Text {
-            anchors.right: parent.right
-            anchors.rightMargin: Theme.edge
-            anchors.left: subChips.right
-            anchors.leftMargin: Theme.gap
-            anchors.verticalCenter: parent.verticalCenter
-            horizontalAlignment: Text.AlignRight
-            elide: Text.ElideLeft
-            text: root.subCaption
-            color: Theme.faint
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.caption
-          }
+          onChipHovered: function(index) { root.setFiltersCursor(index) }
         }
       }
 

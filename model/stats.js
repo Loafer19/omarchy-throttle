@@ -64,3 +64,10 @@ function statsSummary(stats, rangeKey) {
   }
   return { range: r.key, total: total, apps: rows, bars: bars, peak: peak }
 }
+
+// Largest per-app total (down + up) in a summary, at least 1: the bar scale.
+function peakOf(summary) {
+  var m = 1
+  for (var i = 0; i < summary.apps.length; i++) m = Math.max(m, summary.apps[i].down + summary.apps[i].up)
+  return m
+}

@@ -178,7 +178,23 @@ eq("formatAmount bytes vs rate", [M.formatAmount(2048, true, "mbit"), M.formatAm
 eq("anyCap: whole connection only", M.anyCap(M.merged(M.DEFAULTS, { upMbit: 5 })), true)
 const keepRow = M.settingsRows(M.merged(M.DEFAULTS, { keepDays: 10 }), null, true).find(r => r.setting === "keepDays")
 eq("keep choices: unit on the last, odd value appended", keepRow.options.map(o => o.label), ["7", "35", "90 days", "10 days"])
-eq("every model module loads", modelFiles.length, 8)
+eq("every model module loads", modelFiles.length, 9)
+
+// model/nav.js: the panel's keyboard cursor
+const navRows = [{ kind: "section" }, { kind: "app" }, { kind: "note" }, { kind: "app" }]
+eq("first / next selectable skip headers", [M.firstSelectable(navRows), M.nextSelectable(navRows, 1, 1), M.nextSelectable(navRows, 3, 1), M.nextSelectable(navRows, 1, -1)], [1, 3, -1, -1])
+eq("chipIndex by key, 0 when missing", [M.chipIndex(M.TABS, "settings"), M.chipIndex(M.TABS, "nope")], [2, 0])
+eq("cycleIndex wraps both ways", [M.cycleIndex(2, 1, 3), M.cycleIndex(0, -1, 3)], [0, 2])
+eq("clampIndex", [M.clampIndex(-1, 3), M.clampIndex(5, 3)], [0, 2])
+eq("j from tabs: filters, else first row", [M.verticalTarget("tabs", 0, navRows, true, 1), M.verticalTarget("tabs", 0, navRows, false, 1), M.verticalTarget("tabs", 0, navRows, true, -1)], [{ section: "filters" }, { section: "rows", index: 1 }, null])
+eq("k from filters: tabs", M.verticalTarget("filters", 1, navRows, true, -1), { section: "tabs" })
+eq("rows: next, then back up to the chips", [M.verticalTarget("rows", 1, navRows, true, 1), M.verticalTarget("rows", 1, navRows, true, -1), M.verticalTarget("rows", 3, navRows, false, 1)], [{ section: "rows", index: 3 }, { section: "filters", top: true }, null])
+eq("keyHints: detail page", M.keyHints({ inDetail: true, tab: "limits" }).map(h => h[1]), ["back", "rows", "change", "toggle", "pause"])
+eq("keyHints: filters cursor on Traffic", M.keyHints({ section: "filters", cursorActive: true, tab: "traffic" })[0], ["h l", "range"])
+eq("keyHints: + Add", M.keyHints({ tab: "limits", limitsSub: "add" }).map(h => h[1]), ["tabs", "rows", "add", "pause"])
+eq("subCaption", [M.subCaption("limits", "live", M.DEFAULTS, null), M.subCaption("traffic", "live", M.DEFAULTS, { iface: "eth0" }), M.subCaption("traffic", "week", M.DEFAULTS, null)], ["2 of 8 apps", "eth0 · every 1.5 s", "network"])
+eq("rowsFor picks the view", [M.rowsFor({ tab: "limits", limitsSub: "connection", cfg: M.DEFAULTS, status: null }).length > 0, M.rowsFor({ tab: "settings", cfg: M.DEFAULTS, status: null, needsSetup: false })[0].kind], [true, M.settingsRows(M.DEFAULTS, null, true)[0].kind])
+eq("peakOf: at least 1", [M.peakOf({ apps: [] }), M.peakOf({ apps: [{ down: 3, up: 4 }, { down: 1, up: 0 }] })], [1, 7])
 
 console.log("\npassed " + pass + ", failed " + fail)
 process.exit(fail ? 1 : 0)

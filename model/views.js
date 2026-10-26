@@ -3,6 +3,7 @@
 .import "format.js" as Format
 .import "apps.js" as Apps
 .import "live.js" as Live
+.import "settings.js" as Settings
 
 // Tabs and the flat row lists the panel's ListView shows.
 var DEFAULTS = Defaults.CONFIG
@@ -162,4 +163,30 @@ function historyRows(cfg, summary, loaded) {
   if (summary.apps.length === 0) rows.push({ kind: "empty", title: loaded ? "Nothing counted in this range yet" : "Loading…",
     subtitle: loaded ? "History starts when the shell does; it is kept on this machine only" : "" })
   return rows
+}
+
+// The rows of the open view. v: { tab, limitsSub, trafficSub, detailKey, cfg,
+// status, traffic, history, stats, summary, limiting, units, needsSetup }.
+function rowsFor(v) {
+  if (v.tab === "limits") {
+    if (v.limitsSub === "connection") return connectionRows(v.cfg, v.status)
+    if (v.limitsSub === "add") return addRows(v.cfg, v.traffic)
+    if (v.detailKey !== "") {
+      var d = detailRows(v.cfg, v.status, v.traffic, v.detailKey, v.limiting, v.units)
+      if (d.length) return d
+    }
+    return appListRows(v.cfg, v.status, v.traffic, v.limiting, v.units)
+  }
+  if (v.tab === "traffic") {
+    if (v.trafficSub === "live") return liveRows(v.cfg, v.traffic, v.history)
+    return historyRows(v.cfg, v.summary, !!v.stats)
+  }
+  return Settings.settingsRows(v.cfg, v.status, !v.needsSetup)
+}
+
+// Caption right of the sub-tabs: "3 of 8 apps", "enp42s0 · every 1.5 s".
+function subCaption(tab, trafficSub, cfg, status) {
+  if (tab === "limits") return appList(cfg).length + " of " + MAX_APPS + " apps"
+  if (tab === "traffic") return (status && status.iface ? status.iface : "network") + (trafficSub === "live" ? " · every 1.5 s" : "")
+  return ""
 }
